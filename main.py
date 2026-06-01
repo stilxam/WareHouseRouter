@@ -294,13 +294,27 @@ class WarehouseRobotEnv:
         reached = dist_goal_next <= params.r_goal
         
         done = collided | reached | (state.time + 1 >= params.max_steps_in_episode)
+
         
         # Rewards Formulation
         reward_goal = jax.lax.select(reached, 100.0, 0.0)
         reward_collision = jax.lax.select(collided, -50.0, 0.0)
         reward_step = params.c_step
+
+
+        # Calculate the relative angle to the goal after taking the step
+        angle_to_goal = jnp.arctan2(state.y_goal - y_next, state.x_goal - x_next)
+        angle_goal = angle_to_goal - theta_next
+        angle_goal = (angle_goal + jnp.pi) % (2.0 * jnp.pi) - jnp.pi
+        
+        # Compute the alignment-biased velocity reward
+        # This is 1.0 * v_next when pointing directly at the goal, and 0.0 when pointing away.
+        reward_velocity = 0.5 * v_next + 0.5 * v_next * jnp.cos(angle_goal)
+        
         reward_progress = params.c_progress * (state.dist_goal - dist_goal_next)
-        reward = reward_goal + reward_collision + reward_step + reward_progress
+
+
+        reward = reward_goal + reward_collision + reward_step + reward_progress + reward_velocity
         
         next_state = EnvState(
             x=x_next, y=y_next, theta=theta_next, v=v_next,
@@ -346,10 +360,10 @@ class ActorCritic(eqx.Module):
     def __init__(self, obs_dim: int, action_dim: int, key: jax.Array):
         key_actor, key_critic = jax.random.split(key)
         self.actor = eqx.nn.MLP(
-            in_size=obs_dim, out_size=action_dim, width_size=64, depth=2, key=key_actor
+            in_size=obs_dim, out_size=action_dim, width_size=128, depth=3, key=key_actor
         )
         self.critic = eqx.nn.MLP(
-            in_size=obs_dim, out_size=1, width_size=64, depth=2, key=key_critic
+            in_size=obs_dim, out_size=1, width_size=128, depth=3, key=key_critic
         )
         
     def __call__(self, obs: Float[Array, "obs_dim"]) -> Tuple[Float[Array, "action_dim"], Float[Array, "1"]]:
@@ -601,7 +615,7 @@ def animate_trajectory(states: list, params: EnvParams, filename: str = "traject
 
 
 if __name__ == "__main__":
-    model, env, params = train(steps=10_000, num_envs=32, rollouts=30)
+    model, env, params = train(steps=2_000, num_envs=32, rollouts=30)
     
     print("\nRunning a single evaluation episode with the trained policy...")
     eval_key = jax.random.PRNGKey(301)  
