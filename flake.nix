@@ -25,7 +25,7 @@
 
         cudatoolkit = pkgs.cudaPackages_12.cudatoolkit;
         uvFHSenv = pkgs.buildFHSEnv {
-          name = "uv-env";
+          name = "uv-environment";
           runScript = "bash";
           targetPkgs = pkgs: [
             pkgs.python313 
@@ -40,6 +40,7 @@
             pkgs.ruff
             pkgs.gcc
             pkgs.zlib
+            pkgs.nodejs
            ];
 
            profile = ''

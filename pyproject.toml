@@ -13,4 +13,5 @@ dependencies = [
     "matplotlib>=3.10.9",
     "opencv-python-headless>=4.13.0.92",
     "pillow>=12.2.0",
+    "wandb>=0.27.0",
 ]

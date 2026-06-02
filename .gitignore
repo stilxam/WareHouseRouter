@@ -1,6 +1,7 @@
+wandb/
+
 # Byte-compiled / optimized / DLL files
 *.gif
-flake.lock
 __pycache__/
 *.py[codz]
 *$py.class
