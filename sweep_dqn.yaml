@@ -1,0 +1,27 @@
+program: train.py
+method: bayes
+metric:
+  name: metrics/success_rate
+  goal: maximize
+
+parameters:
+  algo:
+    value: dqn
+
+  # Fixed training scale (~5M steps, single-env sequential)
+  total_steps:
+    value: 5_000_000
+
+  # Tuned
+  lr:
+    distribution: log_uniform_values
+    min: 5.0e-5
+    max: 5.0e-3
+  gamma:
+    values: [0.95, 0.99]
+  batch_size:
+    values: [128, 256, 512]
+  target_update_freq:
+    values: [200, 500, 1000, 2000]
+  eps_decay_steps:
+    values: [100_000, 250_000, 500_000]

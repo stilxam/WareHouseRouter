@@ -6,17 +6,25 @@ metric:
 
 parameters:
   algo:
-    values: [ppo, dqn]
+    value: ppo
 
-  # Shared
-  gamma:
-    values: [0.95, 0.99]
+  # Fixed training scale (RTX 4090 — ~82M env steps per run)
+  num_envs:
+    value: 256
+  steps:
+    value: 5000
+
+  # Tuned
   lr:
     distribution: log_uniform_values
     min: 1.0e-4
-    max: 1.0e-2
-
-  # PPO-specific
+    max: 3.0e-3
+  gamma:
+    values: [0.95, 0.99]
+  entropy_coeff:
+    distribution: log_uniform_values
+    min: 0.005
+    max: 0.1
   clip_eps:
     values: [0.1, 0.2, 0.3]
   gae_lambda:
@@ -24,14 +32,4 @@ parameters:
   k_epochs:
     values: [2, 4, 8]
   rollouts:
-    values: [30, 64, 128]
-  entropy_coeff:
-    values: [0.01, 0.05, 0.1]
-
-  # DQN-specific
-  target_update_freq:
-    values: [200, 500, 1000]
-  eps_decay_steps:
-    values: [50_000, 100_000, 200_000]
-  batch_size:
-    values: [128, 256, 512]
+    values: [64, 128, 256]
