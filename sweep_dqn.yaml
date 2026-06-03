@@ -1,5 +1,6 @@
 program: train.py
 method: bayes
+run_cap: 30
 metric:
   name: metrics/success_rate
   goal: maximize
@@ -13,6 +14,8 @@ parameters:
     value: 5_000_000
 
   # Tuned
+  buffer_size:
+    values: [50_000, 100_000, 200_000]
   lr:
     distribution: log_uniform_values
     min: 5.0e-5

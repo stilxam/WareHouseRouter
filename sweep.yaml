@@ -1,5 +1,6 @@
 program: train.py
 method: bayes
+run_cap: 40
 metric:
   name: metrics/success_rate
   goal: maximize
