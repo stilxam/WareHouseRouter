@@ -58,8 +58,6 @@ $$ \mathbf{s}_t = \left[
     \cos(\theta_t), \, 
     \sin(\theta_t), \, 
     v_t, \, 
-    dist_{goal,t}, \, 
-    angle_{goal,t}, \, 
     L_1, \, L_2, \, \dots, \, L_N 
 \right]^T $$
 
@@ -67,8 +65,6 @@ Where:
 * $\theta_t$ is the heading angle of the robot's velocity vector.
 * $\cos(\theta_t), \sin(\theta_t)$ represent the heading orientation to avoid angular boundary discontinuities [1].
 * $v_t = \|\mathbf{v}_t\|$ is the current speed of the robot, where $0 \le v_t \le v_{max}$.
-* $dist_{goal,t}$ is the Euclidean distance from the robot's center to the goal center.
-* $angle_{goal,t}$ is the angular difference between the robot's current heading $\theta_t$ and the vector pointing toward the goal.
 * $L_i$ represents the normalized inverse proximity measurements from the Lidar array.
 
 ### Lidar Inputs
