@@ -53,7 +53,6 @@ def train(
             "entropy_coeff": entropy_coeff, "lr": lr, "seed": seed,
         }
     )
-    # Read back so sweep agent overrides take effect
     steps      = wandb.config.steps
     num_envs   = wandb.config.num_envs
     rollouts   = wandb.config.rollouts
@@ -66,15 +65,17 @@ def train(
     seed       = wandb.config.seed
 
     key = jax.random.PRNGKey(seed)
-    key_env, key_model, key_train = jax.random.split(key, 3)
+    key_world, key_env, key_model, key_train = jax.random.split(key, 4)
 
     env    = WarehouseRobotEnv(M=16)
     params = env.default_params()
     obs_dim    = env.obs_dim(params)
-    action_dim = 6
+    action_dim = 4
+
+    world = env.generate_world(key_world, params)
 
     keys_env = jax.random.split(key_env, num_envs)
-    init_obs, init_state = jax.vmap(lambda k: env.reset(k, params))(keys_env)
+    init_obs, init_state = jax.vmap(lambda k: env.reset(world, k, params))(keys_env)
 
     model     = ActorCritic(obs_dim, action_dim, key_model)
     tx        = optax.chain(
@@ -97,7 +98,7 @@ def train(
 
             keys_step = jax.random.split(k_step, num_envs)
             next_o, next_s, r, d, info = jax.vmap(
-                lambda ks, st, a: step_with_autoreset(env, ks, st, a, params)
+                lambda ks, st, a: step_with_autoreset(env, ks, st, a, world, params)
             )(keys_step, s, actions)
 
             ep_r       = ep_r + r
@@ -185,7 +186,7 @@ def train(
         traj, obs, state, ep_carry, ep_len_carry = collect_rollout(model, obs, state, keys_train[i], ep_carry, ep_len_carry)
         obs_h, act_h, logp_h, rew_h, done_h, next_obs_h, success_h, collision_h, ep_returns_tn, ep_lengths_tn = traj
 
-        ep_returns_np = np.asarray(ep_returns_tn)  # [T, N], nan where episode didn't end
+        ep_returns_np = np.asarray(ep_returns_tn)
         ep_lengths_np = np.asarray(ep_lengths_tn)
         mask = ~np.isnan(ep_returns_np)
         ep_returns_ppo.extend(ep_returns_np[mask].tolist())
@@ -242,12 +243,12 @@ def train(
             else:
                 eval_key    = jax.random.PRNGKey(201)
                 policy_fn   = lambda o: jnp.argmax(model(o)[0])
-                eval_states = rollout_single_episode(env, policy_fn, params, eval_key)
+                eval_states = rollout_single_episode(env, policy_fn, params, world, eval_key)
                 cpu_states  = jax.device_get(eval_states)
                 fname       = f"ppo_step_{total_env_steps:07d}.gif"
                 render_thread = threading.Thread(
                     target=animate_trajectory,
-                    args=(cpu_states, params, fname),
+                    args=(cpu_states, world, params, fname),
                     kwargs={"log_to_wandb": True},
                 )
                 render_thread.start()
@@ -263,10 +264,10 @@ def train(
 
     print("[PPO] Rendering final evaluation across 10 environments...")
     policy_fn   = lambda o: jnp.argmax(model(o)[0])
-    episodes    = rollout_n_episodes(env, policy_fn, params, jax.random.PRNGKey(202), n=10)
+    episodes    = rollout_n_episodes(env, policy_fn, params, world, jax.random.PRNGKey(202), n=10)
     episodes_cpu = [jax.device_get(ep) for ep in episodes]
-    animate_multi_episode(episodes_cpu, params, "ppo_final_eval.gif", log_to_wandb=True)
+    animate_multi_episode(episodes_cpu, world, params, "ppo_final_eval.gif", log_to_wandb=True)
 
     wandb.finish()
 
-    return model, env, params
+    return model, env, params, world

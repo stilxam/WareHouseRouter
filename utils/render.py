@@ -7,21 +7,22 @@ import numpy as np
 from pathlib import Path
 from typing import Callable
 
-from environment.warehouse import WarehouseRobotEnv, EnvParams
+from environment.warehouse import WarehouseRobotEnv, EnvParams, WorldState
 
 
 def rollout_single_episode(
     env: WarehouseRobotEnv,
     policy_fn: Callable,
     params: EnvParams,
+    world: WorldState,
     key: jax.Array
 ) -> list:
     """
-    Runs a single deterministic rollout.
+    Runs a single deterministic rollout on a fixed world.
     policy_fn: (obs: Array) -> action (int scalar Array)
     """
     key_reset, key_run = jax.random.split(key)
-    obs, state = env.reset(key_reset, params)
+    obs, state = env.reset(world, key_reset, params)
 
     states_history = [state]
     curr_state = state
@@ -32,7 +33,7 @@ def rollout_single_episode(
     while not done and (curr_state.time < params.max_steps_in_episode):
         action = policy_fn(curr_obs)
         step_key, subkey = jax.random.split(step_key)
-        curr_obs, curr_state, _, done, _ = env.step(subkey, curr_state, action, params)
+        curr_obs, curr_state, _, done, _ = env.step(subkey, curr_state, action, world, params)
         states_history.append(curr_state)
         if done:
             break
@@ -44,15 +45,17 @@ def rollout_n_episodes(
     env: WarehouseRobotEnv,
     policy_fn: Callable,
     params: EnvParams,
+    world: WorldState,
     key: jax.Array,
     n: int = 10,
 ) -> list:
     keys = jax.random.split(key, n)
-    return [rollout_single_episode(env, policy_fn, params, k) for k in keys]
+    return [rollout_single_episode(env, policy_fn, params, world, k) for k in keys]
 
 
 def animate_multi_episode(
     episodes: list,
+    world: WorldState,
     params: EnvParams,
     filename: str = "trajectory.gif",
     log_to_wandb: bool = False,
@@ -75,6 +78,12 @@ def animate_multi_episode(
     COLOR_HEADING  = (255, 128, 0)
     COLOR_TEXT     = (50, 50, 50)
 
+    blocked  = np.asarray(world.blocked)
+    x_start  = float(world.x_start)
+    y_start  = float(world.y_start)
+    x_goal   = float(world.x_goal)
+    y_goal   = float(world.y_goal)
+
     frames = []
     n = len(episodes)
 
@@ -86,14 +95,14 @@ def animate_multi_episode(
 
             for r in range(M):
                 for c in range(M):
-                    if state.blocked[r, c]:
+                    if blocked[r, c]:
                         pt1 = to_pixel(c * W_cell, (r + 1) * W_cell)
                         pt2 = to_pixel((c + 1) * W_cell, r * W_cell)
                         cv2.rectangle(frame, pt1, pt2, COLOR_OBSTACLE, -1)
 
-            cv2.circle(frame, to_pixel(states[0].x, states[0].y), 6, COLOR_START, -1)
+            cv2.circle(frame, to_pixel(x_start, y_start), 6, COLOR_START, -1)
 
-            goal_pt = to_pixel(state.x_goal, state.y_goal)
+            goal_pt = to_pixel(x_goal, y_goal)
             cv2.circle(frame, goal_pt, int(params.r_goal * scale), COLOR_GOAL, 2)
             cv2.circle(frame, goal_pt, 3, COLOR_GOAL, -1)
 
@@ -107,7 +116,7 @@ def animate_multi_episode(
             cv2.line(frame, robot_pt, to_pixel(hx, hy), COLOR_HEADING, 2)
 
             cv2.putText(
-                frame, f"Ep {ep_idx + 1}/{n} | Step {idx:03d} | Speed {float(state.v):.2f}",
+                frame, f"Ep {ep_idx + 1}/{n} | Step {idx:03d}",
                 (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_TEXT, 1, cv2.LINE_AA,
             )
             frames.append(frame)
@@ -125,7 +134,7 @@ def animate_multi_episode(
         print(f"Animation error: {e}")
 
 
-def animate_trajectory(states: list, params: EnvParams, filename: str = "trajectory.gif", log_to_wandb: bool = False):
+def animate_trajectory(states: list, world: WorldState, params: EnvParams, filename: str = "trajectory.gif", log_to_wandb: bool = False):
     """Renders a rollout to a GIF using OpenCV + ImageIO."""
     filename = str(Path.cwd().joinpath("animations", filename))
     M = params.M
@@ -144,6 +153,12 @@ def animate_trajectory(states: list, params: EnvParams, filename: str = "traject
     COLOR_HEADING  = (255, 128, 0)
     COLOR_TEXT     = (50, 50, 50)
 
+    blocked = np.asarray(world.blocked)
+    x_start = float(world.x_start)
+    y_start = float(world.y_start)
+    x_goal  = float(world.x_goal)
+    y_goal  = float(world.y_goal)
+
     path_points = [to_pixel(s.x, s.y) for s in states]
     frames = []
 
@@ -152,14 +167,14 @@ def animate_trajectory(states: list, params: EnvParams, filename: str = "traject
 
         for r in range(M):
             for c in range(M):
-                if state.blocked[r, c]:
+                if blocked[r, c]:
                     pt1 = to_pixel(c * W_cell, (r + 1) * W_cell)
                     pt2 = to_pixel((c + 1) * W_cell, r * W_cell)
                     cv2.rectangle(frame, pt1, pt2, COLOR_OBSTACLE, -1)
 
-        cv2.circle(frame, to_pixel(states[0].x, states[0].y), 6, COLOR_START, -1)
+        cv2.circle(frame, to_pixel(x_start, y_start), 6, COLOR_START, -1)
 
-        goal_pt = to_pixel(state.x_goal, state.y_goal)
+        goal_pt = to_pixel(x_goal, y_goal)
         cv2.circle(frame, goal_pt, int(params.r_goal * scale), COLOR_GOAL, 2)
         cv2.circle(frame, goal_pt, 3, COLOR_GOAL, -1)
 
@@ -173,7 +188,7 @@ def animate_trajectory(states: list, params: EnvParams, filename: str = "traject
         cv2.line(frame, robot_pt, to_pixel(hx, hy), COLOR_HEADING, 2)
 
         cv2.putText(
-            frame, f"Step: {idx:03d} | Speed: {float(state.v):.2f}",
+            frame, f"Step: {idx:03d}",
             (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_TEXT, 1, cv2.LINE_AA
         )
         frames.append(frame)

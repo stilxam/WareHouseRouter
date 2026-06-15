@@ -38,7 +38,7 @@ def main():
     if args.algo == "ppo":
         from algos.ppo import train
         lr = args.lr if args.lr is not None else 3e-4
-        model, env, params = train(
+        model, env, params, world = train(
             steps=args.steps,
             num_envs=args.num_envs,
             rollouts=args.rollouts,
@@ -54,13 +54,13 @@ def main():
         )
         print("\nFinal evaluation rollout...")
         policy_fn   = lambda o: jnp.argmax(model(o)[0])
-        eval_states = rollout_single_episode(env, policy_fn, params, jax.random.PRNGKey(301))
-        animate_trajectory(jax.device_get(eval_states), params, "ppo_final.gif")
+        eval_states = rollout_single_episode(env, policy_fn, params, world, jax.random.PRNGKey(301))
+        animate_trajectory(jax.device_get(eval_states), world, params, "ppo_final.gif")
 
     elif args.algo == "dqn":
         from algos.dqn import train
         lr = args.lr if args.lr is not None else 1e-3
-        model, env, params = train(
+        model, env, params, world = train(
             total_steps=args.total_steps,
             gamma=args.gamma,
             buffer_size=args.buffer_size,
@@ -75,8 +75,8 @@ def main():
         )
         print("\nFinal evaluation rollout...")
         policy_fn   = lambda o: jnp.argmax(model(o))
-        eval_states = rollout_single_episode(env, policy_fn, params, jax.random.PRNGKey(301))
-        animate_trajectory(jax.device_get(eval_states), params, "dqn_final.gif")
+        eval_states = rollout_single_episode(env, policy_fn, params, world, jax.random.PRNGKey(301))
+        animate_trajectory(jax.device_get(eval_states), world, params, "dqn_final.gif")
 
 
 if __name__ == "__main__":

@@ -5,41 +5,41 @@ from typing import Tuple, NamedTuple, Dict, Any
 
 
 class EnvState(NamedTuple):
-    x: Float[Array, ""]           # Robot continuous X coordinate
-    y: Float[Array, ""]           # Robot continuous Y coordinate
-    theta: Float[Array, ""]       # Heading angle in radians
-    v: Float[Array, ""]           # Speed of the robot [0, v_max]
-    x_goal: Float[Array, ""]      # Target continuous X coordinate
-    y_goal: Float[Array, ""]      # Target continuous Y coordinate
-    dist_goal: Float[Array, ""]   # Distance from robot to goal center
-    time: Int[Array, ""]          # Elapsed steps in current episode
-    blocked: Bool[Array, "M M"]   # Boolean map layout (True = Blocked)
-    start_cell: Int[Array, "2"]   # Grid coordinates of start cell
-    goal_cell: Int[Array, "2"]    # Grid coordinates of goal cell
+    x:     Float[Array, ""]     # Robot continuous X coordinate
+    y:     Float[Array, ""]     # Robot continuous Y coordinate
+    theta: Float[Array, ""]     # Heading angle in radians
+    time:  Int[Array, ""]       # Elapsed steps in current episode
+
+
+class WorldState(NamedTuple):
+    blocked:   Bool[Array, "M M"]   # Boolean map layout (True = Blocked)
+    start_idx: Int[Array, "2"]      # Grid coordinates of start cell
+    goal_idx:  Int[Array, "2"]      # Grid coordinates of goal cell
+    x_start:   Float[Array, ""]     # Start continuous X coordinate
+    y_start:   Float[Array, ""]     # Start continuous Y coordinate
+    x_goal:    Float[Array, ""]     # Goal continuous X coordinate
+    y_goal:    Float[Array, ""]     # Goal continuous Y coordinate
 
 
 class EnvParams(NamedTuple):
-    M: int = 16                   # Grid dimensions (M x M)
-    W_cell: float = 0.8           # Width of each grid cell (4 * radius)
-    r_robot: float = 0.2          # Robot radius
-    r_goal: float = 0.3           # Goal acceptance radius
-    d_max: float = 3.0            # Maximum Lidar range
-    v_max: float = 3.0            # Maximum linear velocity
-    delta_v: float = 0.2          # Change in velocity per acceleration step
+    M: int = 16                          # Grid dimensions (M x M)
+    W_cell: float = 0.8                  # Width of each grid cell
+    r_robot: float = 0.2                 # Robot radius
+    r_goal: float = 0.3                  # Goal acceptance radius
+    fixed_speed: float = 1.0             # Fixed linear velocity
+    camera_range: float = 2.0            # Forward camera range (world units)
     delta_theta_small: float = 0.087266  # ~5 degrees in radians
     delta_theta_big: float = 0.523599    # ~30 degrees in radians
-    dt: float = 0.1               # Simulation time increment per step
-    c_progress: float = 1.0       # Progress scaling coefficient
+    dt: float = 0.1                      # Simulation time increment per step
     max_steps_in_episode: int = 200
-    num_lidar_rays: int = 16
-    num_obstacles: int = 12       # Number of rectangular obstacles
+    num_obstacles: int = 12              # Number of rectangular obstacles
     c_step: float = -0.1
 
 
 class WarehouseRobotEnv:
     """
-    JAX-native continuous navigation environment with procedural map generation
-    and fast parallel raycasting operations.
+    JAX-native continuous navigation environment with a single fixed world
+    and a forward-facing camera sensor.
     """
     def __init__(self, M: int = 16):
         self.M = M
@@ -48,7 +48,7 @@ class WarehouseRobotEnv:
         return EnvParams(M=self.M)
 
     def obs_dim(self, params: EnvParams) -> int:
-        return 3 + 2 * params.num_lidar_rays
+        return 3  # [cos θ, sin θ, camera_reading]
 
     def _get_cell_bounds(self, params: EnvParams) -> Tuple[Float[Array, "M M 2"], Float[Array, "M M 2"]]:
         cols = jnp.arange(self.M)
@@ -84,7 +84,7 @@ class WarehouseRobotEnv:
         final_reach, _ = jax.lax.while_loop(cond_fn, body_fn, (reachable, True))
         return final_reach[goal_idx[0], goal_idx[1]]
 
-    def _generate_valid_map(self, key: jax.Array, params: EnvParams) -> Tuple[Bool[Array, "M M"], Int[Array, "2"], Int[Array, "2"]]:
+    def generate_world(self, key: jax.Array, params: EnvParams) -> WorldState:
         def cond_fn(val):
             return ~val[4] & (val[5] < 100)
 
@@ -130,7 +130,21 @@ class WarehouseRobotEnv:
             0
         )
         _, blocked, start_idx, goal_idx, _, _ = jax.lax.while_loop(cond_fn, body_fn, init_val)
-        return blocked, start_idx, goal_idx
+
+        x_start = (start_idx[1] + 0.5) * params.W_cell
+        y_start = (start_idx[0] + 0.5) * params.W_cell
+        x_goal  = (goal_idx[1] + 0.5) * params.W_cell
+        y_goal  = (goal_idx[0] + 0.5) * params.W_cell
+
+        return WorldState(
+            blocked=blocked,
+            start_idx=start_idx,
+            goal_idx=goal_idx,
+            x_start=x_start,
+            y_start=y_start,
+            x_goal=x_goal,
+            y_goal=y_goal,
+        )
 
     def _dist_to_obstacles(self, x: Float[Array, ""], y: Float[Array, ""], blocked: Bool[Array, "M M"], params: EnvParams) -> Float[Array, ""]:
         W_cell = params.W_cell
@@ -174,111 +188,75 @@ class WarehouseRobotEnv:
         t_box = jnp.where(intersect & blocked, jnp.maximum(t_near, 0.0), d_max)
         return jnp.minimum(t_boundary, jnp.min(t_box))
 
-    def _compute_single_goal_ray(
-        self, p: Float[Array, "2"], alpha: Float[Array, ""],
-        x_goal: Float[Array, ""], y_goal: Float[Array, ""],
-        r_goal: float, d_max: float
+    def _compute_camera(
+        self, x: Float[Array, ""], y: Float[Array, ""], theta: Float[Array, ""],
+        world: WorldState, params: EnvParams
     ) -> Float[Array, ""]:
-        d = jnp.stack([jnp.cos(alpha), jnp.sin(alpha)])
-        oc = p - jnp.stack([x_goal, y_goal])
+        p = jnp.stack([x, y])
+        camera_range = params.camera_range
+
+        cell_min, cell_max = self._get_cell_bounds(params)
+        w_world = self.M * params.W_cell
+        t_obs = self._compute_single_lidar_ray(p, theta, world.blocked, cell_min, cell_max, w_world, camera_range)
+
+        d = jnp.stack([jnp.cos(theta), jnp.sin(theta)])
+        oc = p - jnp.stack([world.x_goal, world.y_goal])
         b = jnp.dot(oc, d)
-        c_val = jnp.dot(oc, oc) - r_goal ** 2
+        c_val = jnp.dot(oc, oc) - params.r_goal ** 2
         disc = b * b - c_val
         sqrt_disc = jnp.sqrt(jnp.maximum(disc, 0.0))
         t_enter = -b - sqrt_disc
-        t_exit = -b + sqrt_disc
-        t = jnp.where(t_enter >= 0.0, t_enter, t_exit)
-        hit = (disc >= 0.0) & (t >= 0.0) & (t <= d_max)
-        return jnp.where(hit, 1.0 - t / d_max, 0.0)
+        t_exit  = -b + sqrt_disc
+        t_goal_raw = jnp.where(t_enter >= 0.0, t_enter, t_exit)
+        goal_hit = (disc >= 0.0) & (t_goal_raw >= 0.0) & (t_goal_raw <= camera_range)
+        t_goal = jnp.where(goal_hit, t_goal_raw, camera_range + 1.0)
 
-    def _compute_lidar_readings(
-        self, p: Float[Array, "2"], theta: Float[Array, ""],
-        blocked: Bool[Array, "M M"], params: EnvParams
-    ) -> Float[Array, "num_lidar_rays"]:
-        cell_min, cell_max = self._get_cell_bounds(params)
-        w_world = self.M * params.W_cell
-        angles = theta + jnp.arange(1, params.num_lidar_rays + 1) * (2.0 * jnp.pi / params.num_lidar_rays)
-        dists = jax.vmap(
-            lambda a: self._compute_single_lidar_ray(p, a, blocked, cell_min, cell_max, w_world, params.d_max)
-        )(angles)
-        return 1.0 - dists / params.d_max
-
-    def _compute_goal_lidar_readings(
-        self, p: Float[Array, "2"], theta: Float[Array, ""],
-        x_goal: Float[Array, ""], y_goal: Float[Array, ""],
-        params: EnvParams
-    ) -> Float[Array, "num_lidar_rays"]:
-        angles = theta + jnp.arange(1, params.num_lidar_rays + 1) * (2.0 * jnp.pi / params.num_lidar_rays)
-        return jax.vmap(
-            lambda a: self._compute_single_goal_ray(p, a, x_goal, y_goal, params.r_goal, params.d_max)
-        )(angles)
-
-    def get_obs(self, state: EnvState, params: EnvParams) -> Float[Array, "obs_dim"]:
-        p = jnp.stack([state.x, state.y])
-        lidar = self._compute_lidar_readings(p, state.theta, state.blocked, params)
-        goal_lidar = self._compute_goal_lidar_readings(p, state.theta, state.x_goal, state.y_goal, params)
-        return jnp.concatenate([
-            jnp.array([jnp.cos(state.theta), jnp.sin(state.theta), state.v]),
-            lidar,
-            goal_lidar
-        ])
-
-    def reset(self, key: jax.Array, params: EnvParams) -> Tuple[Float[Array, "obs_dim"], EnvState]:
-        key_map, key_theta = jax.random.split(key)
-        blocked, start_idx, goal_idx = self._generate_valid_map(key_map, params)
-        x_start = (start_idx[1] + 0.5) * params.W_cell
-        y_start = (start_idx[0] + 0.5) * params.W_cell
-        x_goal = (goal_idx[1] + 0.5) * params.W_cell
-        y_goal = (goal_idx[0] + 0.5) * params.W_cell
-        theta = jax.random.uniform(key_theta, (), minval=-jnp.pi, maxval=jnp.pi)
-        dist_goal = jnp.sqrt((x_start - x_goal) ** 2 + (y_start - y_goal) ** 2)
-        state = EnvState(
-            x=x_start, y=y_start, theta=theta, v=0.0,
-            x_goal=x_goal, y_goal=y_goal, dist_goal=dist_goal,
-            time=0, blocked=blocked, start_cell=start_idx, goal_cell=goal_idx
+        obs_hit = t_obs < camera_range
+        reading = jnp.where(
+            goal_hit & (t_goal <= t_obs), 2.0,
+            jnp.where(obs_hit, 1.0, 0.0)
         )
-        return self.get_obs(state, params), state
+        return reading
+
+    def get_obs(self, state: EnvState, world: WorldState, params: EnvParams) -> Float[Array, "3"]:
+        camera = self._compute_camera(state.x, state.y, state.theta, world, params)
+        return jnp.array([jnp.cos(state.theta), jnp.sin(state.theta), camera])
+
+    def reset(self, world: WorldState, key: jax.Array, params: EnvParams) -> Tuple[Float[Array, "3"], EnvState]:
+        theta = jax.random.uniform(key, (), minval=-jnp.pi, maxval=jnp.pi)
+        state = EnvState(x=world.x_start, y=world.y_start, theta=theta, time=0)
+        return self.get_obs(state, world, params), state
 
     def step(
-        self, key: jax.Array, state: EnvState, action: Int[Array, ""], params: EnvParams
-    ) -> Tuple[Float[Array, "obs_dim"], EnvState, Float[Array, ""], Bool[Array, ""], Dict[str, Any]]:
-        v_next = jax.lax.select(action == 0, jnp.minimum(state.v + params.delta_v, params.v_max), state.v)
-        v_next = jax.lax.select(action == 1, jnp.maximum(state.v - params.delta_v, 0.0), v_next)
-
+        self, key: jax.Array, state: EnvState, action: Int[Array, ""],
+        world: WorldState, params: EnvParams
+    ) -> Tuple[Float[Array, "3"], EnvState, Float[Array, ""], Bool[Array, ""], Dict[str, Any]]:
         theta_next = state.theta
-        theta_next = jax.lax.select(action == 2, state.theta - params.delta_theta_small, theta_next)
-        theta_next = jax.lax.select(action == 3, state.theta + params.delta_theta_small, theta_next)
-        theta_next = jax.lax.select(action == 4, state.theta - params.delta_theta_big, theta_next)
-        theta_next = jax.lax.select(action == 5, state.theta + params.delta_theta_big, theta_next)
+        theta_next = jax.lax.select(action == 0, state.theta - params.delta_theta_small, theta_next)
+        theta_next = jax.lax.select(action == 1, state.theta + params.delta_theta_small, theta_next)
+        theta_next = jax.lax.select(action == 2, state.theta - params.delta_theta_big,   theta_next)
+        theta_next = jax.lax.select(action == 3, state.theta + params.delta_theta_big,   theta_next)
         theta_next = (theta_next + jnp.pi) % (2.0 * jnp.pi) - jnp.pi
 
-        x_next = state.x + v_next * jnp.cos(theta_next) * params.dt
-        y_next = state.y + v_next * jnp.sin(theta_next) * params.dt
+        x_next = state.x + params.fixed_speed * jnp.cos(theta_next) * params.dt
+        y_next = state.y + params.fixed_speed * jnp.sin(theta_next) * params.dt
 
-        min_dist = self._dist_to_obstacles(x_next, y_next, state.blocked, params)
+        min_dist = self._dist_to_obstacles(x_next, y_next, world.blocked, params)
         collided = min_dist <= params.r_robot
-        dist_goal_next = jnp.sqrt((x_next - state.x_goal) ** 2 + (y_next - state.y_goal) ** 2)
+        dist_goal_next = jnp.sqrt((x_next - world.x_goal) ** 2 + (y_next - world.y_goal) ** 2)
         reached = dist_goal_next <= params.r_goal
         done = collided | reached | (state.time + 1 >= params.max_steps_in_episode)
 
-        reward_goal = jax.lax.select(reached, 100.0, 0.0)
+        reward_goal      = jax.lax.select(reached,  100.0, 0.0)
         reward_collision = jax.lax.select(collided, -50.0, 0.0)
-        reward_step = params.c_step
+        reward_step      = params.c_step
 
-        angle_to_goal = jnp.arctan2(state.y_goal - y_next, state.x_goal - x_next)
-        angle_goal = (angle_to_goal - theta_next + jnp.pi) % (2.0 * jnp.pi) - jnp.pi
-        reward_velocity = 0.5 * v_next + 0.5 * v_next * jnp.cos(angle_goal)
-        reward_progress = params.c_progress * (state.dist_goal - dist_goal_next)
-
-        reward = reward_goal + reward_collision + reward_step + reward_progress + reward_velocity
+        reward = reward_goal + reward_collision + reward_step
 
         next_state = EnvState(
-            x=x_next, y=y_next, theta=theta_next, v=v_next,
-            x_goal=state.x_goal, y_goal=state.y_goal, dist_goal=dist_goal_next,
-            time=state.time + 1, blocked=state.blocked,
-            start_cell=state.start_cell, goal_cell=state.goal_cell
+            x=x_next, y=y_next, theta=theta_next, time=state.time + 1
         )
-        obs = self.get_obs(next_state, params)
+        obs = self.get_obs(next_state, world, params)
         info = {"is_success": reached, "is_collision": collided, "step": state.time + 1}
         return (
             jax.lax.stop_gradient(obs),
@@ -291,11 +269,11 @@ class WarehouseRobotEnv:
 
 def step_with_autoreset(
     env: WarehouseRobotEnv, key: jax.Array, state: EnvState,
-    action: Int[Array, ""], params: EnvParams
-) -> Tuple[Float[Array, "obs_dim"], EnvState, Float[Array, ""], Bool[Array, ""], Dict[str, Any]]:
-    obs, next_state, reward, done, info = env.step(key, state, action, params)
+    action: Int[Array, ""], world: WorldState, params: EnvParams
+) -> Tuple[Float[Array, "3"], EnvState, Float[Array, ""], Bool[Array, ""], Dict[str, Any]]:
+    obs, next_state, reward, done, info = env.step(key, state, action, world, params)
     key_reset, _ = jax.random.split(key)
-    reset_obs, reset_state = env.reset(key_reset, params)
-    final_obs = jax.tree_util.tree_map(lambda r, s: jnp.where(done, r, s), reset_obs, obs)
+    reset_obs, reset_state = env.reset(world, key_reset, params)
+    final_obs   = jax.tree_util.tree_map(lambda r, s: jnp.where(done, r, s), reset_obs,   obs)
     final_state = jax.tree_util.tree_map(lambda r, s: jnp.where(done, r, s), reset_state, next_state)
     return final_obs, final_state, reward, done, info

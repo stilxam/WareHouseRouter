@@ -96,6 +96,7 @@ def train(
     )
     total_steps        = wandb.config.total_steps
     gamma              = wandb.config.gamma
+    buffer_size        = wandb.config.buffer_size
     batch_size         = wandb.config.batch_size
     lr                 = wandb.config.lr
     target_update_freq = wandb.config.target_update_freq
@@ -103,12 +104,14 @@ def train(
     seed               = wandb.config.seed
 
     key = jax.random.PRNGKey(seed)
-    key_env, key_model, key_run = jax.random.split(key, 3)
+    key_world, key_env, key_model, key_run = jax.random.split(key, 4)
 
     env    = WarehouseRobotEnv(M=16)
     params = env.default_params()
     obs_dim    = env.obs_dim(params)
-    action_dim = 6
+    action_dim = 4
+
+    world = env.generate_world(key_world, params)
 
     model        = QNetwork(obs_dim, action_dim, key_model)
     target_model = model
@@ -140,8 +143,6 @@ def train(
     # ---------------------------------------------------------------- scan
     @eqx.filter_jit
     def run_chunk(model, target_model, opt_state, obs, state, buf, key, chunk_start):
-        # Partition: arrays go in the lax.scan carry; static (activation fns etc.)
-        # captured by closure so the carry contains only valid JAX types.
         m_arr, m_static = eqx.partition(model, eqx.is_array)
         t_arr, _        = eqx.partition(target_model, eqx.is_array)
 
@@ -149,11 +150,9 @@ def train(
             m_arr, t_arr, opt_state, obs, state, buf, key = carry
             key, k_eps, k_act, k_env, k_sample = jax.random.split(key, 5)
 
-            # Reconstruct full models from array carry + static closure
             m  = eqx.combine(m_arr, m_static)
             tm = eqx.combine(t_arr, m_static)
 
-            # ε-greedy action
             frac   = jnp.minimum(step_idx.astype(jnp.float32) / eps_decay_steps, 1.0)
             eps    = eps_start + frac * (eps_end - eps_start)
             q_vals = m(obs)
@@ -161,16 +160,12 @@ def train(
             rand   = jax.random.randint(k_act, (), 0, action_dim, dtype=jnp.int32)
             action = jax.lax.select(jax.random.uniform(k_eps) < eps, rand, greedy)
 
-            # Step + autoreset
             next_obs, next_state, reward, done, info = step_with_autoreset(
-                env, k_env, state, action, params
+                env, k_env, state, action, world, params
             )
 
-            # Buffer add
             buf = _buffer_add(buf, obs, action, reward, next_obs, done.astype(jnp.float32))
 
-            # Conditional TD update — branches return (m_arr, opt_state, loss) so
-            # only JAX arrays flow through lax.cond.
             def do_update(args):
                 m_arr, os = args
                 m = eqx.combine(m_arr, m_static)
@@ -188,7 +183,6 @@ def train(
                 do_update, skip_update, (m_arr, opt_state)
             )
 
-            # Hard target update (arrays only, no non-JAX types in cond output)
             t_arr = jax.lax.cond(
                 step_idx % target_update_freq == 0,
                 lambda _: m_arr,
@@ -204,14 +198,13 @@ def train(
             scan_step, (m_arr, t_arr, opt_state, obs, state, buf, key), step_indices
         )
 
-        # Recombine arrays + static to return full models
         model        = eqx.combine(m_arr, m_static)
         target_model = eqx.combine(t_arr, m_static)
         return model, target_model, opt_state, obs, state, buf, key, metrics
 
     # ---------------------------------------------------------------- init
     key_run, subkey = jax.random.split(key_run)
-    obs, state = jax.jit(lambda k: env.reset(k, params))(subkey)
+    obs, state = jax.jit(lambda k: env.reset(world, k, params))(subkey)
 
     ep_rewards:    list = []
     ep_successes:  list = []
@@ -286,12 +279,12 @@ def train(
             else:
                 eval_key    = jax.random.PRNGKey(201)
                 policy_fn   = lambda o: jnp.argmax(model(o))
-                eval_states = rollout_single_episode(env, policy_fn, params, eval_key)
+                eval_states = rollout_single_episode(env, policy_fn, params, world, eval_key)
                 cpu_states  = jax.device_get(eval_states)
                 fname       = f"dqn_step_{step:07d}.gif"
                 render_thread = threading.Thread(
                     target=animate_trajectory,
-                    args=(cpu_states, params, fname),
+                    args=(cpu_states, world, params, fname),
                     kwargs={"log_to_wandb": True},
                 )
                 render_thread.start()
@@ -307,10 +300,10 @@ def train(
 
     print("[DQN] Rendering final evaluation across 10 environments...")
     policy_fn    = lambda o: jnp.argmax(model(o))
-    episodes     = rollout_n_episodes(env, policy_fn, params, jax.random.PRNGKey(202), n=10)
+    episodes     = rollout_n_episodes(env, policy_fn, params, world, jax.random.PRNGKey(202), n=10)
     episodes_cpu = [jax.device_get(ep) for ep in episodes]
-    animate_multi_episode(episodes_cpu, params, "dqn_final_eval.gif", log_to_wandb=True)
+    animate_multi_episode(episodes_cpu, world, params, "dqn_final_eval.gif", log_to_wandb=True)
 
     wandb.finish()
 
-    return model, env, params
+    return model, env, params, world

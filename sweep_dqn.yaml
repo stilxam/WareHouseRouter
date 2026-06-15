@@ -11,11 +11,11 @@ parameters:
 
   # Fixed training scale (~5M steps, single-env sequential)
   total_steps:
-    value: 5_000_000
+    value: 5000000
 
   # Tuned
   buffer_size:
-    values: [50_000, 100_000, 200_000]
+    values: [50000, 100000, 200000]
   lr:
     distribution: log_uniform_values
     min: 5.0e-5
@@ -26,5 +26,6 @@ parameters:
     values: [128, 256, 512]
   target_update_freq:
     values: [200, 500, 1000, 2000]
+  # Extended upper bound — sparse reward + fixed world needs sustained exploration
   eps_decay_steps:
-    values: [100_000, 250_000, 500_000]
+    values: [100000, 250000, 500000, 1000000]

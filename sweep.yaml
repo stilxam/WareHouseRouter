@@ -9,7 +9,7 @@ parameters:
   algo:
     value: ppo
 
-  # Fixed training scale (RTX 4090 — ~82M env steps per run)
+  # Fixed training scale (RTX 4090 — ~82M–328M env steps per run)
   num_envs:
     value: 256
   steps:
@@ -22,10 +22,11 @@ parameters:
     max: 3.0e-3
   gamma:
     values: [0.95, 0.99]
+  # Higher floor than before — sparse reward (no shaping) needs sustained exploration
   entropy_coeff:
     distribution: log_uniform_values
-    min: 0.005
-    max: 0.1
+    min: 0.02
+    max: 0.2
   clip_eps:
     values: [0.1, 0.2, 0.3]
   gae_lambda:
