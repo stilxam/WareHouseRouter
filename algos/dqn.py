@@ -17,7 +17,7 @@ class QNetwork(eqx.Module):
     net: eqx.nn.MLP
 
     def __init__(self, obs_dim: int, action_dim: int, key: jax.Array):
-        self.net = eqx.nn.MLP(in_size=obs_dim, out_size=action_dim, width_size=128, depth=3, key=key)
+        self.net = eqx.nn.MLP(in_size=obs_dim, out_size=action_dim, width_size=128, depth=3, activation=jax.nn.tanh, key=key)
 
     def __call__(self, obs: Float[Array, "obs_dim"]) -> Float[Array, "action_dim"]:
         return self.net(obs)

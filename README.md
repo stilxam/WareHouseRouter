@@ -6,7 +6,7 @@ Autonomous robot navigation in a continuous 2D warehouse environment, trained wi
 
 ## Problem
 
-A circular robot must navigate from a fixed start cell to a fixed goal cell in a single warehouse map. The map is generated once and reused for all training and evaluation. The robot has no privileged knowledge of the goal's location — it must discover it through a forward-facing camera alone.
+A circular robot must navigate from a fixed start cell to a fixed goal cell in a single warehouse map. The map is generated once and reused for all training and evaluation. The robot has no privileged knowledge of the goal's location — it must discover it through onboard sensors: a forward-facing camera and a 360° lidar.
 
 ```
 +------------------+   BFS validity   +-----------+   generate once   +----------------------+
@@ -33,20 +33,23 @@ A circular robot must navigate from a fixed start cell to a fixed goal cell in a
 - Moves at fixed speed `fixed_speed = 1.0` — no acceleration or braking
 - State: heading angle `θ` and position `(x, y)` only
 
-### Observation Space (3-dimensional)
+### Observation Space (19-dimensional)
 
 | Component | Dim | Description |
 |---|---|---|
 | `cos θ, sin θ` | 2 | Heading orientation (avoids angular discontinuity) |
 | Camera | 1 | Forward-facing camera reading (see below) |
+| Lidar | 16 | 360° distance sweep, normalized to `[0, 1]` |
 
-**Forward camera:** Single ray cast in the heading direction `θ`, range 2.0 world units.
+**Forward camera:** Single ray cast in heading direction `θ`, range 2.0 world units.
 
 | Reading | Meaning |
 |---|---|
 | `0` | Empty — no obstacle or goal within range |
 | `1` | Wall/obstacle detected |
 | `2` | Goal detected (ray intersects goal circle, closer than any obstacle) |
+
+**360° lidar:** 16 rays uniformly spaced around the robot (ego-centric, first ray at `θ`), range 4.0 world units. Each ray returns `distance / lidar_range ∈ [0, 1]`. Walls, obstacles, and goal are indistinguishable — only proximity is encoded.
 
 ### Action Space (4 discrete actions)
 
@@ -211,11 +214,11 @@ from algos.ppo import ActorCritic
 from algos.dqn import QNetwork
 
 # PPO
-model = ActorCritic(obs_dim=3, action_dim=4, key=jax.random.PRNGKey(0))
+model = ActorCritic(obs_dim=19, action_dim=4, key=jax.random.PRNGKey(0))
 model = eqx.tree_deserialise_leaves("checkpoints/ppo_final.eqx", model)
 
 # DQN
-model = QNetwork(obs_dim=3, action_dim=4, key=jax.random.PRNGKey(0))
+model = QNetwork(obs_dim=19, action_dim=4, key=jax.random.PRNGKey(0))
 model = eqx.tree_deserialise_leaves("checkpoints/dqn_final.eqx", model)
 ```
 
@@ -289,6 +292,8 @@ All parameters are in `EnvParams` (`environment/warehouse.py`):
 | `r_goal` | `0.3` | Goal acceptance radius |
 | `fixed_speed` | `1.0` | Robot speed (constant) |
 | `camera_range` | `2.0` | Forward camera range (world units) |
+| `lidar_range` | `4.0` | Lidar max range (world units) |
+| `num_lidar_rays` | `16` | Number of lidar rays (360° sweep) |
 | `delta_theta_small` | `5°` | Small turn magnitude |
 | `delta_theta_big` | `30°` | Large turn magnitude |
 | `dt` | `0.1` | Simulation timestep |

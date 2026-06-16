@@ -19,8 +19,8 @@ class ActorCritic(eqx.Module):
 
     def __init__(self, obs_dim: int, action_dim: int, key: jax.Array):
         key_a, key_c = jax.random.split(key)
-        self.actor  = eqx.nn.MLP(in_size=obs_dim, out_size=action_dim, width_size=128, depth=3, key=key_a)
-        self.critic = eqx.nn.MLP(in_size=obs_dim, out_size=1,          width_size=128, depth=3, key=key_c)
+        self.actor  = eqx.nn.MLP(in_size=obs_dim, out_size=action_dim, width_size=128, depth=3, activation=jax.nn.tanh, key=key_a)
+        self.critic = eqx.nn.MLP(in_size=obs_dim, out_size=1,          width_size=128, depth=3, activation=jax.nn.tanh, key=key_c)
 
     def __call__(self, obs: Float[Array, "obs_dim"]) -> Tuple:
         return self.actor(obs), self.critic(obs)
@@ -34,6 +34,7 @@ def train(
     gae_lambda: float = 0.95,
     clip_eps: float      = 0.2,
     k_epochs: int        = 4,
+    minibatch_size: int  = 256,
     entropy_coeff: float = 0.05,
     lr: float            = 3e-4,
     seed: int         = 42,
@@ -49,20 +50,21 @@ def train(
         config={
             "algo": "ppo", "steps": steps, "num_envs": num_envs,
             "rollouts": rollouts, "gamma": gamma, "gae_lambda": gae_lambda,
-            "clip_eps": clip_eps, "k_epochs": k_epochs,
+            "clip_eps": clip_eps, "k_epochs": k_epochs, "minibatch_size": minibatch_size,
             "entropy_coeff": entropy_coeff, "lr": lr, "seed": seed,
         }
     )
-    steps      = wandb.config.steps
-    num_envs   = wandb.config.num_envs
-    rollouts   = wandb.config.rollouts
-    gamma      = wandb.config.gamma
-    gae_lambda = wandb.config.gae_lambda
-    clip_eps      = wandb.config.clip_eps
-    k_epochs      = wandb.config.k_epochs
-    entropy_coeff = wandb.config.entropy_coeff
-    lr            = wandb.config.lr
-    seed       = wandb.config.seed
+    steps          = wandb.config.steps
+    num_envs       = wandb.config.num_envs
+    rollouts       = wandb.config.rollouts
+    gamma          = wandb.config.gamma
+    gae_lambda     = wandb.config.gae_lambda
+    clip_eps       = wandb.config.clip_eps
+    k_epochs       = wandb.config.k_epochs
+    minibatch_size = wandb.config.minibatch_size
+    entropy_coeff  = wandb.config.entropy_coeff
+    lr             = wandb.config.lr
+    seed           = wandb.config.seed
 
     key = jax.random.PRNGKey(seed)
     key_world, key_env, key_model, key_train = jax.random.split(key, 4)
@@ -174,7 +176,9 @@ def train(
 
     # ------------------------------------------------------------------ loop
     obs, state = init_obs, init_state
-    keys_train  = jax.random.split(key_train, steps)
+    keys_all    = jax.random.split(key_train, steps * 2)
+    keys_train  = keys_all[:steps]
+    keys_shuffle = keys_all[steps:]
     render_thread = None
     ep_returns_ppo: list = []
     ep_lengths_ppo: list = []
@@ -202,10 +206,16 @@ def train(
         ret_flat  = returns.reshape(T * N)
 
         loss = actor_loss = critic_loss = entropy_val = clip_frac = ev = None
+        key_epoch = keys_shuffle[i]
         for _ in range(k_epochs):
-            model, opt_state, loss, actor_loss, critic_loss, entropy_val, clip_frac, ev = ppo_update(
-                model, opt_state, obs_flat, act_flat, logp_flat, adv_flat, ret_flat
-            )
+            key_epoch, subkey = jax.random.split(key_epoch)
+            perm = jax.random.permutation(subkey, T * N)
+            for mb_start in range(0, T * N, minibatch_size):
+                idx = perm[mb_start:mb_start + minibatch_size]
+                model, opt_state, loss, actor_loss, critic_loss, entropy_val, clip_frac, ev = ppo_update(
+                    model, opt_state,
+                    obs_flat[idx], act_flat[idx], logp_flat[idx], adv_flat[idx], ret_flat[idx]
+                )
 
         total_env_steps = (i + 1) * num_envs * rollouts
         n_done      = jnp.maximum(jnp.sum(done_h), 1)
