@@ -77,6 +77,7 @@ def train(
     chunk_size: int          = 1_000,
     render_freq: int         = 50_000,
     seed: int                = 42,
+    world_seed: int | None   = None,
     wandb_project: str        = "warehouserouter",
     wandb_entity: str | None  = None,
 ):
@@ -91,7 +92,7 @@ def train(
             "buffer_size": buffer_size, "batch_size": batch_size, "lr": lr,
             "target_update_freq": target_update_freq, "eps_start": eps_start,
             "eps_end": eps_end, "eps_decay_steps": eps_decay_steps,
-            "learning_starts": learning_starts, "seed": seed,
+            "learning_starts": learning_starts, "seed": seed, "world_seed": world_seed,
         }
     )
     total_steps        = wandb.config.total_steps
@@ -102,6 +103,7 @@ def train(
     target_update_freq = wandb.config.target_update_freq
     eps_decay_steps    = wandb.config.eps_decay_steps
     seed               = wandb.config.seed
+    world_seed         = wandb.config.world_seed
 
     key = jax.random.PRNGKey(seed)
     key_world, key_env, key_model, key_run = jax.random.split(key, 4)
@@ -111,7 +113,8 @@ def train(
     obs_dim    = env.obs_dim(params)
     action_dim = 4
 
-    world = env.generate_world(key_world, params)
+    world_key = jax.random.PRNGKey(world_seed) if world_seed is not None else key_world
+    world = env.generate_world(world_key, params)
 
     model        = QNetwork(obs_dim, action_dim, key_model)
     target_model = model

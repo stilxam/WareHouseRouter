@@ -9,9 +9,9 @@ parameters:
   algo:
     value: dqn
 
-  # Fixed training scale (~5M steps, single-env sequential)
+  # Fixed training scale (20M env steps, matched with PPO)
   total_steps:
-    value: 5000000
+    value: 20000000
 
   # Tuned
   buffer_size:
@@ -21,7 +21,7 @@ parameters:
     min: 5.0e-5
     max: 5.0e-3
   gamma:
-    values: [0.95, 0.99]
+    values: [0.99, 0.995]
   batch_size:
     values: [128, 256, 512]
   target_update_freq:
@@ -29,3 +29,5 @@ parameters:
   # Extended upper bound — sparse reward + fixed world needs sustained exploration
   eps_decay_steps:
     values: [100000, 250000, 500000, 1000000]
+  world_seed:
+    value: 42

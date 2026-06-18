@@ -27,7 +27,7 @@ class ActorCritic(eqx.Module):
 
 
 def train(
-    steps: int        = 2_000,
+    total_env_steps: int = 20_000_000,
     num_envs: int     = 32,
     rollouts: int     = 64,
     gamma: float      = 0.99,
@@ -37,7 +37,9 @@ def train(
     minibatch_size: int  = 256,
     entropy_coeff: float = 0.05,
     lr: float            = 3e-4,
+    reward_norm: bool    = False,
     seed: int         = 42,
+    world_seed: int | None = None,
     wandb_project: str        = "warehouserouter",
     wandb_entity: str | None  = None,
 ):
@@ -48,23 +50,28 @@ def train(
         project=wandb_project,
         entity=wandb_entity,
         config={
-            "algo": "ppo", "steps": steps, "num_envs": num_envs,
+            "algo": "ppo", "total_env_steps": total_env_steps, "num_envs": num_envs,
             "rollouts": rollouts, "gamma": gamma, "gae_lambda": gae_lambda,
             "clip_eps": clip_eps, "k_epochs": k_epochs, "minibatch_size": minibatch_size,
-            "entropy_coeff": entropy_coeff, "lr": lr, "seed": seed,
+            "entropy_coeff": entropy_coeff, "lr": lr, "reward_norm": reward_norm,
+            "seed": seed, "world_seed": world_seed,
         }
     )
-    steps          = wandb.config.steps
-    num_envs       = wandb.config.num_envs
-    rollouts       = wandb.config.rollouts
-    gamma          = wandb.config.gamma
-    gae_lambda     = wandb.config.gae_lambda
-    clip_eps       = wandb.config.clip_eps
-    k_epochs       = wandb.config.k_epochs
-    minibatch_size = wandb.config.minibatch_size
-    entropy_coeff  = wandb.config.entropy_coeff
-    lr             = wandb.config.lr
-    seed           = wandb.config.seed
+    total_env_steps = wandb.config.total_env_steps
+    num_envs        = wandb.config.num_envs
+    rollouts        = wandb.config.rollouts
+    gamma           = wandb.config.gamma
+    gae_lambda      = wandb.config.gae_lambda
+    clip_eps        = wandb.config.clip_eps
+    k_epochs        = wandb.config.k_epochs
+    minibatch_size  = wandb.config.minibatch_size
+    entropy_coeff   = wandb.config.entropy_coeff
+    lr              = wandb.config.lr
+    reward_norm     = wandb.config.reward_norm
+    seed            = wandb.config.seed
+    world_seed      = wandb.config.world_seed
+
+    steps = total_env_steps // (num_envs * rollouts)
 
     key = jax.random.PRNGKey(seed)
     key_world, key_env, key_model, key_train = jax.random.split(key, 4)
@@ -74,7 +81,8 @@ def train(
     obs_dim    = env.obs_dim(params)
     action_dim = 4
 
-    world = env.generate_world(key_world, params)
+    world_key = jax.random.PRNGKey(world_seed) if world_seed is not None else key_world
+    world = env.generate_world(world_key, params)
 
     keys_env = jax.random.split(key_env, num_envs)
     init_obs, init_state = jax.vmap(lambda k: env.reset(world, k, params))(keys_env)
@@ -196,6 +204,9 @@ def train(
         ep_returns_ppo.extend(ep_returns_np[mask].tolist())
         ep_lengths_ppo.extend(ep_lengths_np[mask].tolist())
 
+        if reward_norm:
+            rew_h = rew_h / (float(jnp.std(rew_h)) + 1e-8)
+
         advantages, returns = compute_gae(model, obs_h, rew_h, done_h, next_obs_h)
 
         T, N = rollouts, num_envs
@@ -217,7 +228,7 @@ def train(
                     obs_flat[idx], act_flat[idx], logp_flat[idx], adv_flat[idx], ret_flat[idx]
                 )
 
-        total_env_steps = (i + 1) * num_envs * rollouts
+        env_steps = (i + 1) * num_envs * rollouts
         n_done      = jnp.maximum(jnp.sum(done_h), 1)
         success_r   = float(jnp.sum(success_h) / n_done)
         collision_r = float(jnp.sum(collision_h) / n_done)
@@ -225,7 +236,7 @@ def train(
         mean_ep_r   = float(np.mean(ep_returns_ppo[-100:])) if ep_returns_ppo else float("nan")
         mean_ep_len = float(np.mean(ep_lengths_ppo[-100:])) if ep_lengths_ppo else float("nan")
         wandb.log({
-            "total_env_steps":        total_env_steps,
+            "total_env_steps":        env_steps,
             "loss/total":             float(loss),
             "loss/actor":             float(actor_loss),
             "loss/critic":            float(critic_loss),
@@ -238,13 +249,13 @@ def train(
             "metrics/timeout_rate":   timeout_r,
             "metrics/mean_ep_length": mean_ep_len,
             "metrics/ep_count":       len(ep_returns_ppo),
-        }, step=total_env_steps)
+        }, step=env_steps)
         if i % 10 == 0 or i == steps - 1:
-            print(f"Update {i:04d} | Steps {total_env_steps:08d} | Loss {float(loss):.3f} | "
+            print(f"Update {i:04d} | Steps {env_steps:08d} | Loss {float(loss):.3f} | "
                   f"Reward {mean_ep_r:.3f} | Success {success_r:.3f} | Timeout {timeout_r:.3f} | EV {float(ev):.3f}")
 
-        if i > 0 and (total_env_steps % 50_000 < num_envs * rollouts or i == steps - 1):
-            ckpt_path = f"checkpoints/ppo_step_{total_env_steps:07d}.eqx"
+        if i > 0 and (env_steps % 50_000 < num_envs * rollouts or i == steps - 1):
+            ckpt_path = f"checkpoints/ppo_step_{env_steps:07d}.eqx"
             eqx.tree_serialise_leaves(ckpt_path, model)
             print(f" [Ckpt] Saved model to '{ckpt_path}'")
 
@@ -255,7 +266,7 @@ def train(
                 policy_fn   = lambda o: jnp.argmax(model(o)[0])
                 eval_states = rollout_single_episode(env, policy_fn, params, world, eval_key)
                 cpu_states  = jax.device_get(eval_states)
-                fname       = f"ppo_step_{total_env_steps:07d}.gif"
+                fname       = f"ppo_step_{env_steps:07d}.gif"
                 render_thread = threading.Thread(
                     target=animate_trajectory,
                     args=(cpu_states, world, params, fname),
