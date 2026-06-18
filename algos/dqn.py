@@ -74,7 +74,7 @@ def train(
     eps_end: float           = 0.05,
     eps_decay_steps: int     = 100_000,
     learning_starts: int     = 1_000,
-    chunk_size: int          = 1_000,
+    chunk_size: int          = 10_000,
     render_freq: int         = 500_000,
     seed: int                = 42,
     world_seed: int | None   = None,

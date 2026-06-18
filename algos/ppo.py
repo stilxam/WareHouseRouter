@@ -150,38 +150,57 @@ def train(
         return advantages, returns
 
     # ------------------------------------------------------------------ update
+    # All k_epochs × n_minibatches gradient steps compiled into one JIT call,
+    # eliminating thousands of Python dispatch roundtrips per training step.
+    n_mb = (rollouts * num_envs) // minibatch_size
+
     @eqx.filter_jit
-    def ppo_update(model, opt_state, obs_flat, act_flat, old_logp_flat, adv_flat, ret_flat):
-        def loss_fn(m):
-            logits, values = jax.vmap(m)(obs_flat)
-            values = values.squeeze(-1)
+    def ppo_epochs(model, opt_state, obs_flat, act_flat, logp_flat, adv_flat, ret_flat, key):
+        # lax.scan requires all carry leaves to be JAX arrays.
+        # Partition model into trainable arrays and static structure (e.g. activation fns).
+        m_arr, m_static = eqx.partition(model, eqx.is_array)
 
+        def loss_fn(m_arr, obs_b, act_b, logp_b, adv_b, ret_b):
+            m = eqx.combine(m_arr, m_static)
+            logits, values = jax.vmap(m)(obs_b)
+            values    = values.squeeze(-1)
             log_probs = jax.nn.log_softmax(logits, axis=-1)
-            new_logp  = jnp.take_along_axis(log_probs, act_flat[:, None], axis=-1).squeeze(-1)
-
-            ratio    = jnp.exp(new_logp - old_logp_flat)
-            adv_norm = (adv_flat - adv_flat.mean()) / (adv_flat.std() + 1e-8)
+            new_logp  = jnp.take_along_axis(log_probs, act_b[:, None], axis=-1).squeeze(-1)
+            ratio     = jnp.exp(new_logp - logp_b)
+            adv_norm  = (adv_b - adv_b.mean()) / (adv_b.std() + 1e-8)
             clip_loss = -jnp.mean(jnp.minimum(
                 ratio * adv_norm,
-                jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv_norm
+                jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv_norm,
             ))
-
-            value_loss = jnp.mean((values - ret_flat) ** 2)
-
-            probs   = jax.nn.softmax(logits, axis=-1)
-            entropy = -jnp.sum(probs * log_probs, axis=-1).mean()
-
-            clip_frac = jnp.mean((jnp.abs(ratio - 1.0) > clip_eps).astype(jnp.float32))
-            ev = 1.0 - jnp.var(ret_flat - jax.lax.stop_gradient(values)) / (jnp.var(ret_flat) + 1e-8)
-
+            value_loss = jnp.mean((values - ret_b) ** 2)
+            probs      = jax.nn.softmax(logits, axis=-1)
+            entropy    = -jnp.sum(probs * log_probs, axis=-1).mean()
+            clip_frac  = jnp.mean((jnp.abs(ratio - 1.0) > clip_eps).astype(jnp.float32))
+            ev = 1.0 - jnp.var(ret_b - jax.lax.stop_gradient(values)) / (jnp.var(ret_b) + 1e-8)
             total = clip_loss + 0.5 * value_loss - entropy_coeff * entropy
             return total, (clip_loss, value_loss, entropy, clip_frac, ev)
 
-        (loss, (actor_loss, critic_loss, entropy_val, clip_frac, ev)), grads = eqx.filter_value_and_grad(
-            loss_fn, has_aux=True
-        )(model)
-        updates, next_opt_state = tx.update(grads, opt_state, model)
-        return eqx.apply_updates(model, updates), next_opt_state, loss, actor_loss, critic_loss, entropy_val, clip_frac, ev
+        def run_minibatch(carry, idx):
+            m_arr, opt_st = carry
+            (loss, aux), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(
+                m_arr, obs_flat[idx], act_flat[idx], logp_flat[idx], adv_flat[idx], ret_flat[idx]
+            )
+            updates, opt_st = tx.update(grads, opt_st, eqx.combine(m_arr, m_static))
+            m_arr, _ = eqx.partition(eqx.apply_updates(eqx.combine(m_arr, m_static), updates), eqx.is_array)
+            return (m_arr, opt_st), (loss, *aux)
+
+        def run_epoch(carry, subkey):
+            m_arr, opt_st = carry
+            perm   = jax.random.permutation(subkey, rollouts * num_envs)
+            mb_idx = perm[:n_mb * minibatch_size].reshape(n_mb, minibatch_size)
+            (m_arr, opt_st), metrics = jax.lax.scan(run_minibatch, (m_arr, opt_st), mb_idx)
+            return (m_arr, opt_st), metrics
+
+        epoch_keys = jax.random.split(key, k_epochs)
+        (m_arr, opt_state), all_metrics = jax.lax.scan(run_epoch, (m_arr, opt_state), epoch_keys)
+        model = eqx.combine(m_arr, m_static)
+        # Return last epoch's last minibatch metrics for logging
+        return model, opt_state, jax.tree.map(lambda x: x[-1, -1], all_metrics)
 
     # ------------------------------------------------------------------ loop
     obs, state = init_obs, init_state
@@ -215,24 +234,15 @@ def train(
 
         advantages, returns = compute_gae(model, obs_h, rew_h, done_h, next_obs_h)
 
-        T, N = rollouts, num_envs
-        obs_flat  = obs_h.reshape(T * N, -1)
-        act_flat  = act_h.reshape(T * N)
-        logp_flat = logp_h.reshape(T * N)
-        adv_flat  = advantages.reshape(T * N)
-        ret_flat  = returns.reshape(T * N)
+        obs_flat  = obs_h.reshape(rollouts * num_envs, -1)
+        act_flat  = act_h.reshape(rollouts * num_envs)
+        logp_flat = logp_h.reshape(rollouts * num_envs)
+        adv_flat  = advantages.reshape(rollouts * num_envs)
+        ret_flat  = returns.reshape(rollouts * num_envs)
 
-        loss = actor_loss = critic_loss = entropy_val = clip_frac = ev = None
-        key_epoch = keys_shuffle[i]
-        for _ in range(k_epochs):
-            key_epoch, subkey = jax.random.split(key_epoch)
-            perm = jax.random.permutation(subkey, T * N)
-            for mb_start in range(0, T * N, minibatch_size):
-                idx = perm[mb_start:mb_start + minibatch_size]
-                model, opt_state, loss, actor_loss, critic_loss, entropy_val, clip_frac, ev = ppo_update(
-                    model, opt_state,
-                    obs_flat[idx], act_flat[idx], logp_flat[idx], adv_flat[idx], ret_flat[idx]
-                )
+        model, opt_state, (loss, actor_loss, critic_loss, entropy_val, clip_frac, ev) = ppo_epochs(
+            model, opt_state, obs_flat, act_flat, logp_flat, adv_flat, ret_flat, keys_shuffle[i]
+        )
 
         env_steps = (i + 1) * num_envs * rollouts
         n_done      = jnp.maximum(jnp.sum(done_h), 1)

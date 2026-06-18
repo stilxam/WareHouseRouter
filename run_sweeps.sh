@@ -3,8 +3,9 @@ set -euo pipefail
 
 # Each world gets its own independent Bayesian sweep so the optimizer cannot
 # conflate world difficulty with hyperparameter quality.
-# Runs: 3 worlds × 2 algos = 6 sweeps; PPO+DQN agents run in parallel per world,
-# worlds run sequentially to stay within single-GPU memory (2 × 0.45 fraction).
+# Runs: 3 worlds × 2 algos = 6 sweeps, all launched in parallel.
+# Memory: ~700MB × 6 ≈ 4.2GB — well within RTX 4090's 24GB.
+# Compute: each process gets ~1/6 GPU time; total wall-clock unchanged vs sequential.
 
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.45
@@ -49,27 +50,26 @@ done
 echo "└──────────┴──────────────────────────────┴───────────────────┘"
 echo ""
 
-# ── Run agents world-by-world ────────────────────────────────────────────────
+# ── Launch all 6 agents in parallel ─────────────────────────────────────────
+
+PIDS=()
 
 for WORLD in "${WORLDS[@]}"; do
-    echo "[*] ── World seed ${WORLD} ────────────────────────────────────"
-
     wandb agent "${PPO_IDS[$WORLD]}" \
         2>&1 | tee "logs/ppo_world_${WORLD}.log" &
-    PPO_PID=$!
+    PIDS+=($!)
+    echo "[*] PPO world=${WORLD}  PID ${PIDS[-1]}  →  logs/ppo_world_${WORLD}.log"
 
     wandb agent "${DQN_IDS[$WORLD]}" \
         2>&1 | tee "logs/dqn_world_${WORLD}.log" &
-    DQN_PID=$!
-
-    echo "[*] PPO PID $PPO_PID  →  logs/ppo_world_${WORLD}.log"
-    echo "[*] DQN PID $DQN_PID  →  logs/dqn_world_${WORLD}.log"
-
-    trap "kill $PPO_PID $DQN_PID 2>/dev/null; echo 'Stopped.'; exit 1" SIGINT SIGTERM
-
-    wait $PPO_PID $DQN_PID
-    echo "[*] World ${WORLD} done."
-    echo ""
+    PIDS+=($!)
+    echo "[*] DQN world=${WORLD}  PID ${PIDS[-1]}  →  logs/dqn_world_${WORLD}.log"
 done
 
+echo ""
+echo "[*] All 6 agents running. Ctrl+C to stop all."
+
+trap "kill ${PIDS[*]} 2>/dev/null; echo 'Stopped.'; exit 1" SIGINT SIGTERM
+
+wait "${PIDS[@]}"
 echo "[*] All sweeps finished."
