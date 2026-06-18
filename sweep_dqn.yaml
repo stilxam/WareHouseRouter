@@ -1,6 +1,6 @@
 program: train.py
 method: bayes
-run_cap: 15
+run_cap: 10
 metric:
   name: metrics/success_rate
   goal: maximize
@@ -9,9 +9,9 @@ parameters:
   algo:
     value: dqn
 
-  # Fixed training scale (20M env steps, matched with PPO)
+  # Fixed training scale (2M env steps, matched with PPO)
   total_steps:
-    value: 20000000
+    value: 2000000
 
   # Tuned
   buffer_size:

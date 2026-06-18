@@ -1,6 +1,6 @@
 program: train.py
 method: bayes
-run_cap: 20
+run_cap: 10
 metric:
   name: metrics/success_rate
   goal: maximize
@@ -11,9 +11,9 @@ parameters:
 
   # Fixed training scale (RTX 4090 — 20M env steps per run, matched with DQN)
   num_envs:
-    value: 256
+    value: 128
   total_env_steps:
-    value: 20000000
+    value: 2000000
 
   # Tuned
   lr:

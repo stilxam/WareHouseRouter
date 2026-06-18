@@ -8,6 +8,7 @@ set -euo pipefail
 
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.45
+export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 
 WORLDS=(5 6 7)
 mkdir -p logs sweeps
@@ -57,7 +58,7 @@ for WORLD in "${WORLDS[@]}"; do
     JOBS+=("dqn:${WORLD}:${DQN_IDS[$WORLD]}:logs/dqn_world_${WORLD}.log")
 done
 
-MAX_PARALLEL=2
+MAX_PARALLEL=1
 active=0
 
 trap 'echo "Interrupted — killing all jobs."; kill 0; wait 2>/dev/null; exit 1' SIGINT SIGTERM
