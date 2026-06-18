@@ -1,4 +1,7 @@
 wandb/
+*.eqx
+*.gif
+*.png
 
 # Byte-compiled / optimized / DLL files
 *.gif
