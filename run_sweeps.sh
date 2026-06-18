@@ -9,7 +9,7 @@ set -euo pipefail
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.45
 
-WORLDS=(6 7 34)
+WORLDS=(5 6 7)
 mkdir -p logs sweeps
 
 # ── Register all 6 sweeps up-front ──────────────────────────────────────────
