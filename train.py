@@ -19,7 +19,8 @@ def main():
     parser.add_argument("--gae_lambda",   type=float, default=0.95,  help="PPO: GAE lambda")
     parser.add_argument("--entropy_coeff",type=float, default=0.05,  help="PPO: entropy bonus coefficient")
     parser.add_argument("--minibatch_size",type=int,   default=256,   help="PPO: minibatch size for gradient updates")
-    parser.add_argument("--reward_norm",  action="store_true",        help="PPO: normalise rewards by running std before GAE")
+    parser.add_argument("--reward_norm",  type=lambda x: x.lower() == "true", default=False,
+                                          help="PPO: normalise rewards by running std before GAE (True/False)")
 
     # World seed (shared) — decoupled from model/training seed for cross-env comparison
     parser.add_argument("--world_seed",  type=int, default=None,     help="Seed for world generation (independent of --seed). Omit to derive from --seed.")
