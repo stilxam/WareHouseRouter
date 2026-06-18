@@ -190,6 +190,7 @@ def train(
     rew_std_ema  = 1.0   # EMA of reward std; starts at 1.0 (identity) and warms up
 
     print(f"[PPO] {steps} updates | {num_envs} envs | {rollouts} rollout steps | {k_epochs} epochs")
+    recent_success: list = []
     for i in range(steps):
         traj, obs, state, ep_carry, ep_len_carry = collect_rollout(model, obs, state, keys_train[i], ep_carry, ep_len_carry)
         obs_h, act_h, logp_h, rew_h, done_h, next_obs_h, success_h, collision_h, ep_returns_tn, ep_lengths_tn = traj
@@ -249,9 +250,17 @@ def train(
             "metrics/mean_ep_length": mean_ep_len,
             "metrics/ep_count":       len(ep_returns_ppo),
         }, step=env_steps)
+        recent_success.append(success_r)
+        if len(recent_success) > 20:
+            recent_success.pop(0)
+
         if i % 10 == 0 or i == steps - 1:
             print(f"Update {i:04d} | Steps {env_steps:08d} | Loss {float(loss):.3f} | "
                   f"Reward {mean_ep_r:.3f} | Success {success_r:.3f} | Timeout {timeout_r:.3f} | EV {float(ev):.3f}")
+
+        if len(recent_success) == 20 and np.mean(recent_success) >= 0.99:
+            print(f"[PPO] Early stop: mean success >= 0.99 over last 20 updates at step {env_steps}.")
+            break
 
         if i > 0 and (env_steps // 500_000 > (env_steps - num_envs * rollouts) // 500_000 or i == steps - 1):
             ckpt_path = f"checkpoints/{run_tag}_step_{env_steps:08d}.eqx"

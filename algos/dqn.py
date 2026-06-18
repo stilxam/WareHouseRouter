@@ -274,6 +274,10 @@ def train(
             "metrics/episodes":      ep_count,
         }, step=step)
 
+        if len(ep_successes) >= 20 and float(np.mean(ep_successes[-20:])) >= 0.99:
+            print(f"[DQN] Early stop: mean success >= 0.99 over last 20 episodes at step {step}.")
+            break
+
         if step % render_freq == 0:
             ckpt_path = f"checkpoints/{run_tag}_step_{step:08d}.eqx"
             eqx.tree_serialise_leaves(ckpt_path, model)
