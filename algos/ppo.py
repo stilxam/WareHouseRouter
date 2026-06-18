@@ -77,7 +77,7 @@ def train(
     key = jax.random.PRNGKey(seed)
     key_world, key_env, key_model, key_train = jax.random.split(key, 4)
 
-    env    = WarehouseRobotEnv(M=16)
+    env    = WarehouseRobotEnv(M=8)
     params = env.default_params()
     obs_dim    = env.obs_dim(params)
     action_dim = 4
