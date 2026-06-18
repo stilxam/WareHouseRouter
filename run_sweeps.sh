@@ -60,7 +60,7 @@ done
 MAX_PARALLEL=2
 active=0
 
-trap 'echo "Interrupted — killing background jobs."; kill $(jobs -p) 2>/dev/null; exit 1' SIGINT SIGTERM
+trap 'echo "Interrupted — killing all jobs."; kill 0; wait 2>/dev/null; exit 1' SIGINT SIGTERM
 
 for job in "${JOBS[@]}"; do
     algo=$(cut -d: -f1 <<<"$job")

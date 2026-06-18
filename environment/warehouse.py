@@ -27,7 +27,7 @@ class EnvParams(NamedTuple):
     r_robot: float = 0.2                 # Robot radius
     r_goal: float = 0.3                  # Goal acceptance radius
     fixed_speed: float = 1.0             # Fixed linear velocity
-    camera_range: float = 2.0            # Forward camera range (world units)
+    camera_range: float = 8.0            # Forward camera range (world units)
     lidar_range: float = 8.0             # Max lidar range (world units)
     num_lidar_rays: int = 16             # Number of lidar rays (360° sweep)
     delta_theta_small: float = 0.087266  # ~5 degrees in radians
