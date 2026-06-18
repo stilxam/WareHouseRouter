@@ -71,7 +71,8 @@ def train(
     seed            = wandb.config.seed
     world_seed      = wandb.config.world_seed
 
-    steps = total_env_steps // (num_envs * rollouts)
+    steps   = total_env_steps // (num_envs * rollouts)
+    run_tag = f"ppo_w{world_seed}_g{gamma}_lr{lr:.0e}_s{seed}"
 
     key = jax.random.PRNGKey(seed)
     key_world, key_env, key_model, key_train = jax.random.split(key, 4)
@@ -260,7 +261,7 @@ def train(
                   f"Reward {mean_ep_r:.3f} | Success {success_r:.3f} | Timeout {timeout_r:.3f} | EV {float(ev):.3f}")
 
         if i > 0 and (env_steps // 500_000 > (env_steps - num_envs * rollouts) // 500_000 or i == steps - 1):
-            ckpt_path = f"checkpoints/ppo_step_{env_steps:07d}.eqx"
+            ckpt_path = f"checkpoints/{run_tag}_step_{env_steps:08d}.eqx"
             eqx.tree_serialise_leaves(ckpt_path, model)
             print(f" [Ckpt] Saved model to '{ckpt_path}'")
 
@@ -271,7 +272,7 @@ def train(
                 policy_fn   = lambda o: jnp.argmax(model(o)[0])
                 eval_states = rollout_single_episode(env, policy_fn, params, world, eval_key)
                 cpu_states  = jax.device_get(eval_states)
-                fname       = f"ppo_step_{env_steps:07d}.gif"
+                fname       = f"{run_tag}_step_{env_steps:08d}.gif"
                 render_thread = threading.Thread(
                     target=animate_trajectory,
                     args=(cpu_states, world, params, fname),
@@ -284,7 +285,7 @@ def train(
         print("Waiting for final render thread...")
         render_thread.join()
 
-    final_ckpt = "checkpoints/ppo_final.eqx"
+    final_ckpt = f"checkpoints/{run_tag}_final.eqx"
     eqx.tree_serialise_leaves(final_ckpt, model)
     print(f"[PPO] Final model saved to '{final_ckpt}'")
 
@@ -292,7 +293,7 @@ def train(
     policy_fn   = lambda o: jnp.argmax(model(o)[0])
     episodes    = rollout_n_episodes(env, policy_fn, params, world, jax.random.PRNGKey(202), n=10)
     episodes_cpu = [jax.device_get(ep) for ep in episodes]
-    animate_multi_episode(episodes_cpu, world, params, "ppo_final_eval.gif", log_to_wandb=True)
+    animate_multi_episode(episodes_cpu, world, params, f"{run_tag}_final_eval.gif", log_to_wandb=True)
 
     wandb.finish()
 
