@@ -5,10 +5,11 @@ from typing import Tuple, NamedTuple, Dict, Any
 
 
 class EnvState(NamedTuple):
-    x:     Float[Array, ""]     # Robot continuous X coordinate
-    y:     Float[Array, ""]     # Robot continuous Y coordinate
-    theta: Float[Array, ""]     # Heading angle in radians
-    time:  Int[Array, ""]       # Elapsed steps in current episode
+    x:       Float[Array, ""]      # Robot continuous X coordinate
+    y:       Float[Array, ""]      # Robot continuous Y coordinate
+    theta:   Float[Array, ""]      # Heading angle in radians
+    time:    Int[Array, ""]        # Elapsed steps in current episode
+    visited: Bool[Array, "M M"]    # Cells visited this episode
 
 
 class WorldState(NamedTuple):
@@ -36,6 +37,7 @@ class EnvParams(NamedTuple):
     max_steps_in_episode: int = 200
     num_obstacles: int = 12              # Number of rectangular obstacles
     c_step: float = -0.1
+    c_explore: float = 0.2               # Per-cell coverage bonus (paid once per episode)
 
 
 class WarehouseRobotEnv:
@@ -250,7 +252,11 @@ class WarehouseRobotEnv:
 
     def reset(self, world: WorldState, key: jax.Array, params: EnvParams) -> Tuple[Float[Array, "3"], EnvState]:
         theta = jax.random.uniform(key, (), minval=-jnp.pi, maxval=jnp.pi)
-        state = EnvState(x=world.x_start, y=world.y_start, theta=theta, time=0)
+        visited = jnp.zeros((self.M, self.M), dtype=jnp.bool_)
+        start_row = world.start_idx[0]
+        start_col = world.start_idx[1]
+        visited = visited.at[start_row, start_col].set(True)
+        state = EnvState(x=world.x_start, y=world.y_start, theta=theta, time=0, visited=visited)
         return self.get_obs(state, world, params), state
 
     def step(
@@ -273,14 +279,20 @@ class WarehouseRobotEnv:
         reached = dist_goal_next <= params.r_goal
         done = collided | reached | (state.time + 1 >= params.max_steps_in_episode)
 
+        col = jnp.clip((x_next / params.W_cell).astype(jnp.int32), 0, self.M - 1)
+        row = jnp.clip((y_next / params.W_cell).astype(jnp.int32), 0, self.M - 1)
+        is_new = ~state.visited[row, col]
+        visited_next = state.visited.at[row, col].set(True)
+
         reward_goal      = jax.lax.select(reached,  100.0, 0.0)
         reward_collision = jax.lax.select(collided, -50.0, 0.0)
         reward_step      = params.c_step
+        reward_explore   = params.c_explore * is_new.astype(jnp.float32)
 
-        reward = reward_goal + reward_collision + reward_step
+        reward = reward_goal + reward_collision + reward_step + reward_explore
 
         next_state = EnvState(
-            x=x_next, y=y_next, theta=theta_next, time=state.time + 1
+            x=x_next, y=y_next, theta=theta_next, time=state.time + 1, visited=visited_next
         )
         obs = self.get_obs(next_state, world, params)
         info = {"is_success": reached, "is_collision": collided, "step": state.time + 1}
