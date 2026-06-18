@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--clip_eps",     type=float, default=0.2,   help="PPO: clip ratio")
     parser.add_argument("--gae_lambda",   type=float, default=0.95,  help="PPO: GAE lambda")
     parser.add_argument("--entropy_coeff",type=float, default=0.05,  help="PPO: entropy bonus coefficient")
+    parser.add_argument("--minibatch_size",type=int,   default=256,   help="PPO: minibatch size for gradient updates")
     parser.add_argument("--reward_norm",  action="store_true",        help="PPO: normalise rewards by running std before GAE")
 
     # World seed (shared) — decoupled from model/training seed for cross-env comparison
@@ -52,6 +53,7 @@ def main():
             k_epochs=args.k_epochs,
             entropy_coeff=args.entropy_coeff,
             lr=lr,
+            minibatch_size=args.minibatch_size,
             reward_norm=args.reward_norm,
             seed=args.seed,
             world_seed=args.world_seed,

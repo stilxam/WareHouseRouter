@@ -192,6 +192,7 @@ def train(
     ep_lengths_ppo: list = []
     ep_carry     = jnp.zeros(num_envs)
     ep_len_carry = jnp.zeros(num_envs)
+    rew_std_ema  = 1.0   # EMA of reward std; starts at 1.0 (identity) and warms up
 
     print(f"[PPO] {steps} updates | {num_envs} envs | {rollouts} rollout steps | {k_epochs} epochs")
     for i in range(steps):
@@ -205,7 +206,11 @@ def train(
         ep_lengths_ppo.extend(ep_lengths_np[mask].tolist())
 
         if reward_norm:
-            rew_h = rew_h / (float(jnp.std(rew_h)) + 1e-8)
+            # EMA of reward std prevents divide-by-near-zero when early rollouts
+            # contain only step penalties (-0.1 each, std ≈ 0).
+            batch_std    = float(jnp.std(rew_h))
+            rew_std_ema  = 0.99 * rew_std_ema + 0.01 * batch_std
+            rew_h        = rew_h / (rew_std_ema + 1e-8)
 
         advantages, returns = compute_gae(model, obs_h, rew_h, done_h, next_obs_h)
 
@@ -254,7 +259,7 @@ def train(
             print(f"Update {i:04d} | Steps {env_steps:08d} | Loss {float(loss):.3f} | "
                   f"Reward {mean_ep_r:.3f} | Success {success_r:.3f} | Timeout {timeout_r:.3f} | EV {float(ev):.3f}")
 
-        if i > 0 and (env_steps % 50_000 < num_envs * rollouts or i == steps - 1):
+        if i > 0 and (env_steps // 500_000 > (env_steps - num_envs * rollouts) // 500_000 or i == steps - 1):
             ckpt_path = f"checkpoints/ppo_step_{env_steps:07d}.eqx"
             eqx.tree_serialise_leaves(ckpt_path, model)
             print(f" [Ckpt] Saved model to '{ckpt_path}'")

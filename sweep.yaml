@@ -35,6 +35,8 @@ parameters:
     values: [2, 4, 8]
   rollouts:
     values: [64, 128, 256]
+  minibatch_size:
+    values: [128, 256, 512]
   reward_norm:
     values: [true, false]
   world_seed:
