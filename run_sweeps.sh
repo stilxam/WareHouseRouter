@@ -49,27 +49,34 @@ done
 echo "└──────────┴──────────────────────────────┴───────────────────┘"
 echo ""
 
-# ── Run agents world-by-world (2 processes at a time) ────────────────────────
+# ── Run agents via pool of 2 — next job starts as soon as any slot frees ─────
 
+JOBS=()
 for WORLD in "${WORLDS[@]}"; do
-    echo "[*] ── World seed ${WORLD} ────────────────────────────────────"
-
-    wandb agent "${PPO_IDS[$WORLD]}" \
-        2>&1 | tee "logs/ppo_world_${WORLD}.log" &
-    PPO_PID=$!
-
-    wandb agent "${DQN_IDS[$WORLD]}" \
-        2>&1 | tee "logs/dqn_world_${WORLD}.log" &
-    DQN_PID=$!
-
-    echo "[*] PPO PID $PPO_PID  →  logs/ppo_world_${WORLD}.log"
-    echo "[*] DQN PID $DQN_PID  →  logs/dqn_world_${WORLD}.log"
-
-    trap "kill $PPO_PID $DQN_PID 2>/dev/null; echo 'Stopped.'; exit 1" SIGINT SIGTERM
-
-    wait $PPO_PID $DQN_PID
-    echo "[*] World ${WORLD} done."
-    echo ""
+    JOBS+=("ppo:${WORLD}:${PPO_IDS[$WORLD]}:logs/ppo_world_${WORLD}.log")
+    JOBS+=("dqn:${WORLD}:${DQN_IDS[$WORLD]}:logs/dqn_world_${WORLD}.log")
 done
 
+MAX_PARALLEL=2
+active=0
+
+trap 'echo "Interrupted — killing background jobs."; kill $(jobs -p) 2>/dev/null; exit 1' SIGINT SIGTERM
+
+for job in "${JOBS[@]}"; do
+    algo=$(cut -d: -f1 <<<"$job")
+    world=$(cut -d: -f2 <<<"$job")
+    sweep=$(cut -d: -f3 <<<"$job")
+    log=$(cut -d: -f4 <<<"$job")
+
+    if (( active >= MAX_PARALLEL )); then
+        wait -n
+        (( active-- ))
+    fi
+
+    wandb agent "$sweep" 2>&1 | tee "$log" &
+    (( active++ ))
+    echo "[*] Started ${algo} world=${world} (PID $!)  →  ${log}"
+done
+
+wait
 echo "[*] All sweeps finished."
