@@ -99,6 +99,7 @@ def main():
                        help="Explicit list of world seeds to render")
     group.add_argument("--range", type=int, nargs=2, metavar=("START", "END"),
                        help="Render seeds START..END-1")
+    parser.add_argument("--M",     type=int, default=8,  help="Warehouse grid size M (must match training; default 8)")
     parser.add_argument("--cols",  type=int, default=6,  help="Grid columns (default 6)")
     parser.add_argument("--px",    type=int, default=200, help="Pixels per world image (default 200)")
     parser.add_argument("--out",   type=str, default="world_grid.png",
@@ -114,7 +115,7 @@ def main():
     else:
         seeds = list(range(36))   # default: 0-35
 
-    env    = WarehouseRobotEnv(M=16)
+    env    = WarehouseRobotEnv(M=args.M)
     params = env.default_params()
 
     print(f"Generating {len(seeds)} worlds…")
