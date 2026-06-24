@@ -26,7 +26,7 @@ parameters:
     values: [128, 256, 512]
   target_update_freq:
     values: [200, 500, 1000, 2000]
-  # Decay over 10-25% of 20M budget — sparse reward needs sustained exploration
+  
   eps_decay_steps:
     values: [500000, 1000000, 2000000, 5000000]
   world_seed:

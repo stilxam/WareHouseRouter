@@ -14,6 +14,7 @@ from utils.render import rollout_single_episode, animate_trajectory, rollout_n_e
 
 
 class QNetwork(eqx.Module):
+    """MLP mapping observations to Q-values for all actions (width 128, depth 3, tanh)."""
     net: eqx.nn.MLP
 
     def __init__(self, obs_dim: int, action_dim: int, key: jax.Array):
@@ -24,6 +25,16 @@ class QNetwork(eqx.Module):
 
 
 class ReplayBufferState(NamedTuple):
+    """Circular replay buffer stored as a JAX NamedTuple (compatible with lax.scan).
+
+    obs:      Stored observations, shape [capacity, obs_dim].
+    actions:  Stored actions, shape [capacity].
+    rewards:  Stored rewards, shape [capacity].
+    next_obs: Stored next observations, shape [capacity, obs_dim].
+    dones:    Stored done flags as float32, shape [capacity].
+    ptr:      Next write index (wraps modulo capacity).
+    size:     Number of valid entries (capped at capacity).
+    """
     obs:      Float[Array, "capacity obs_dim"]
     actions:  Int[Array, "capacity"]
     rewards:  Float[Array, "capacity"]
@@ -145,7 +156,6 @@ def train(
         updates, next_opt_st = tx.update(grads, opt_st, online)
         return eqx.apply_updates(online, updates), next_opt_st, loss, mean_q
 
-    # ---------------------------------------------------------------- scan
     @eqx.filter_jit
     def run_chunk(model, target_model, opt_state, obs, state, buf, key, chunk_start):
         m_arr, m_static = eqx.partition(model, eqx.is_array)
@@ -207,7 +217,6 @@ def train(
         target_model = eqx.combine(t_arr, m_static)
         return model, target_model, opt_state, obs, state, buf, key, metrics
 
-    # ---------------------------------------------------------------- init
     key_run, subkey = jax.random.split(key_run)
     obs, state = jax.jit(lambda k: env.reset(world, k, params))(subkey)
 

@@ -5,36 +5,70 @@ from typing import Tuple, NamedTuple, Dict, Any
 
 
 class EnvState(NamedTuple):
-    x:     Float[Array, ""]     # Robot continuous X coordinate
-    y:     Float[Array, ""]     # Robot continuous Y coordinate
-    theta: Float[Array, ""]     # Heading angle in radians
-    time:  Int[Array, ""]       # Elapsed steps in current episode
+    """Per-step mutable robot state.
+
+    x:     Continuous X position (world units).
+    y:     Continuous Y position (world units).
+    theta: Heading angle (radians, wrapped to [-π, π]).
+    time:  Elapsed steps in the current episode.
+    """
+    x:     Float[Array, ""]
+    y:     Float[Array, ""]
+    theta: Float[Array, ""]
+    time:  Int[Array, ""]
 
 
 class WorldState(NamedTuple):
-    blocked:   Bool[Array, "M M"]   # Boolean map layout (True = Blocked)
-    start_idx: Int[Array, "2"]      # Grid coordinates of start cell
-    goal_idx:  Int[Array, "2"]      # Grid coordinates of goal cell
-    x_start:   Float[Array, ""]     # Start continuous X coordinate
-    y_start:   Float[Array, ""]     # Start continuous Y coordinate
-    x_goal:    Float[Array, ""]     # Goal continuous X coordinate
-    y_goal:    Float[Array, ""]     # Goal continuous Y coordinate
+    """Fixed map generated once per run.
+
+    blocked:   Boolean M×M grid (True = obstacle cell).
+    start_idx: (row, col) grid index of the start cell.
+    goal_idx:  (row, col) grid index of the goal cell.
+    x_start:   Continuous X of start cell centre (world units).
+    y_start:   Continuous Y of start cell centre (world units).
+    x_goal:    Continuous X of goal cell centre (world units).
+    y_goal:    Continuous Y of goal cell centre (world units).
+    """
+    blocked:   Bool[Array, "M M"]
+    start_idx: Int[Array, "2"]
+    goal_idx:  Int[Array, "2"]
+    x_start:   Float[Array, ""]
+    y_start:   Float[Array, ""]
+    x_goal:    Float[Array, ""]
+    y_goal:    Float[Array, ""]
 
 
 class EnvParams(NamedTuple):
-    M: int = 16                          # Grid dimensions (M x M)
-    W_cell: float = 0.8                  # Width of each grid cell
-    r_robot: float = 0.2                 # Robot radius
-    r_goal: float = 0.3                  # Goal acceptance radius
-    fixed_speed: float = 1.0             # Fixed linear velocity
-    camera_range: float = 3.0            # Forward camera range (world units)
-    lidar_range: float = 4.0             # Max lidar range (world units)
-    num_lidar_rays: int = 16             # Number of lidar rays (360° sweep)
-    delta_theta_small: float = 0.087266  # ~5 degrees in radians
-    delta_theta_big: float = 0.523599    # ~30 degrees in radians
-    dt: float = 0.1                      # Simulation time increment per step
+    """Static environment configuration.
+
+    M:                 Grid size (M×M cells).
+    W_cell:            Cell width in world units (= 4×r_robot, guarantees turning clearance).
+    r_robot:           Robot collision radius.
+    r_goal:            Goal acceptance radius.
+    fixed_speed:       Constant forward speed (world units / s).
+    camera_range:      Forward camera ray length (world units).
+    lidar_range:       Max lidar ray length (world units).
+    num_lidar_rays:    Number of lidar rays evenly spaced over 360°.
+    delta_theta_small: Small turn magnitude (~5°).
+    delta_theta_big:   Large turn magnitude (~30°).
+    dt:                Simulation timestep (s).
+    max_steps_in_episode: Episode timeout (steps).
+    num_obstacles:     Number of rectangular obstacles placed per world.
+    c_step:            Per-step penalty added to reward.
+    """
+    M: int = 8
+    W_cell: float = 0.8
+    r_robot: float = 0.2
+    r_goal: float = 0.3
+    fixed_speed: float = 1.0
+    camera_range: float = 3.0
+    lidar_range: float = 4.0
+    num_lidar_rays: int = 16
+    delta_theta_small: float = 0.087266
+    delta_theta_big: float = 0.523599
+    dt: float = 0.1
     max_steps_in_episode: int = 200
-    num_obstacles: int = 4               # Number of rectangular obstacles
+    num_obstacles: int = 4
     c_step: float = -0.1
 
 

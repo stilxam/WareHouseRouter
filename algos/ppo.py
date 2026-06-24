@@ -14,6 +14,11 @@ from utils.render import rollout_single_episode, animate_trajectory, rollout_n_e
 
 
 class ActorCritic(eqx.Module):
+    """Two independent MLPs sharing no weights (width 128, depth 3, tanh).
+
+    actor:  obs -> action logits.
+    critic: obs -> scalar state value.
+    """
     actor: eqx.nn.MLP
     critic: eqx.nn.MLP
 
@@ -27,7 +32,7 @@ class ActorCritic(eqx.Module):
 
 
 def train(
-    total_env_steps: int = 20_000_000,
+    total_env_steps: int = 2_000_000,
     num_envs: int     = 32,
     rollouts: int     = 64,
     gamma: float      = 0.99,
@@ -95,7 +100,6 @@ def train(
     )
     opt_state = tx.init(eqx.filter(model, eqx.is_array))
 
-    # ------------------------------------------------------------------ collect
     @eqx.filter_jit
     def collect_rollout(model, obs, state, key, ep_carry, ep_len_carry):
         def step_fn(carry, _):
@@ -128,7 +132,6 @@ def train(
         )
         return traj, last_obs, last_state, ep_carry, ep_len_carry
 
-    # ------------------------------------------------------------------ GAE
     @eqx.filter_jit
     def compute_gae(model, obs_h, rew_h, done_h, next_obs_h):
         _, values      = jax.vmap(jax.vmap(model))(obs_h)
@@ -149,7 +152,6 @@ def train(
         returns = advantages + values
         return advantages, returns
 
-    # ------------------------------------------------------------------ update
     @eqx.filter_jit
     def ppo_update(model, opt_state, obs_b, act_b, old_logp_b, adv_b, ret_b):
         def loss_fn(m):
@@ -177,7 +179,6 @@ def train(
         updates, opt_state = tx.update(grads, opt_state, model)
         return eqx.apply_updates(model, updates), opt_state, loss, actor_loss, critic_loss, entropy_val, clip_frac, ev
 
-    # ------------------------------------------------------------------ loop
     obs, state = init_obs, init_state
     keys_all    = jax.random.split(key_train, steps * 2)
     keys_train  = keys_all[:steps]

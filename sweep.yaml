@@ -9,7 +9,7 @@ parameters:
   algo:
     value: ppo
 
-  # Fixed training scale (RTX 4090 — 20M env steps per run, matched with DQN)
+  # Fixed training scale (RTX 4090 — 2M env steps per run, matched with DQN)
   num_envs:
     value: 128
   total_env_steps:
@@ -22,7 +22,7 @@ parameters:
     max: 3.0e-3
   gamma:
     values: [0.99, 0.995]
-  # Higher floor than before — sparse reward (no shaping) needs sustained exploration
+  # Higher floor than before, sparse reward (no shaping) needs sustained exploration
   entropy_coeff:
     distribution: log_uniform_values
     min: 0.02

@@ -10,8 +10,8 @@ A circular robot must navigate from a fixed start cell to a fixed goal cell in a
 
 ```
 +------------------+   BFS validity   +-----------+   generate once   +----------------------+
-|  16×16 Grid      | ---------------> | Connected?| ----------------> | Fixed continuous world|
-|  Obstacles/Free  |                  | (4-way)   |                   | 12.8×12.8 units      |
+|   8×8 Grid       | ---------------> | Connected?| ----------------> | Fixed continuous world|
+|  Obstacles/Free  |                  | (4-way)   |                   |  6.4×6.4 units       |
 +------------------+                  +-----------+                   +----------------------+
 ```
 
@@ -21,8 +21,8 @@ A circular robot must navigate from a fixed start cell to a fixed goal cell in a
 
 ### World
 
-- **Grid:** 16×16 cells, each 0.8×0.8 units (= 4× robot radius, guaranteeing turning clearance)
-- **Continuous world:** 12.8×12.8 units
+- **Grid:** 8×8 cells, each 0.8×0.8 units (= 4× robot radius, guaranteeing turning clearance)
+- **Continuous world:** 6.4×6.4 units
 - **Obstacles:** Rectangular obstacles snapped to grid cells, generated once via `env.generate_world(key, params)`
 - **Validity check:** BFS on the discrete grid ensures start→goal is reachable before accepting the map
 - **Fixed across training:** The same map, start, and goal are used for every episode
@@ -41,7 +41,7 @@ A circular robot must navigate from a fixed start cell to a fixed goal cell in a
 | Camera | 1 | Forward-facing camera reading (see below) |
 | Lidar | 16 | 360° distance sweep, normalized to `[0, 1]` |
 
-**Forward camera:** Single ray cast in heading direction `θ`, range 2.0 world units.
+**Forward camera:** Single ray cast in heading direction `θ`, range 3.0 world units.
 
 | Reading | Meaning |
 |---|---|
@@ -91,7 +91,7 @@ On-policy actor-critic with clipped surrogate objective and Generalized Advantag
 - **Optional reward normalization** (`--reward_norm`): divides rollout rewards by an EMA of reward std before GAE, preventing gradient spikes from rare +100 goal events. EMA initialised at 1.0 to avoid divide-by-zero in early training.
 
 **Data flow per update:**
-1. Collect `T` rollout steps across `N=256` parallel environments (via `jax.vmap` + `lax.scan`)
+1. Collect `T` rollout steps across `N=128` parallel environments (via `jax.vmap` + `lax.scan`)
 2. Compute GAE advantages with a reverse `lax.scan`
 3. Run K epochs of minibatch gradient steps on the flattened `[T×N]` batch
 
@@ -204,7 +204,7 @@ python train.py --algo dqn --lr 5e-4 --target_update_freq 1000
 **DQN:**
 | Argument | Default | Description |
 |---|---|---|
-| `--total_steps` | `20000000` | Total environment steps |
+| `--total_steps` | `1920000` | Total environment steps |
 | `--buffer_size` | `50000` | Replay buffer capacity |
 | `--batch_size` | `256` | Gradient update batch size |
 | `--target_update_freq` | `500` | Hard target update interval (steps) |
@@ -221,10 +221,10 @@ All output filenames encode key hyperparameters for easy identification:
 
 Examples:
 ```
-checkpoints/ppo_w6_g0.99_lr3e-04_s42_step_05000000.eqx
-checkpoints/ppo_w6_g0.99_lr3e-04_s42_final.eqx
-animations/ppo_w6_g0.99_lr3e-04_s42_step_05000000.gif
-animations/dqn_w34_g0.995_lr1e-03_s42_final_eval.gif
+checkpoints/ppo_w5_g0.99_lr3e-04_s42_step_05000000.eqx
+checkpoints/ppo_w5_g0.99_lr3e-04_s42_final.eqx
+animations/ppo_w5_g0.99_lr3e-04_s42_step_05000000.gif
+animations/dqn_w27_g0.995_lr1e-03_s42_final_eval.gif
 ```
 
 | Output | Location | Cadence |
@@ -245,11 +245,11 @@ from algos.dqn import QNetwork
 
 # PPO
 model = ActorCritic(obs_dim=19, action_dim=4, key=jax.random.PRNGKey(0))
-model = eqx.tree_deserialise_leaves("checkpoints/ppo_w6_g0.99_lr3e-04_s42_final.eqx", model)
+model = eqx.tree_deserialise_leaves("checkpoints/ppo_w5_g0.99_lr3e-04_s42_final.eqx", model)
 
 # DQN
 model = QNetwork(obs_dim=19, action_dim=4, key=jax.random.PRNGKey(0))
-model = eqx.tree_deserialise_leaves("checkpoints/dqn_w6_g0.99_lr1e-03_s42_final.eqx", model)
+model = eqx.tree_deserialise_leaves("checkpoints/dqn_w5_g0.99_lr1e-03_s42_final.eqx", model)
 ```
 
 ---
@@ -270,15 +270,15 @@ python explore_worlds.py
 python explore_worlds.py --range 0 80 --cols 8
 
 # Compare specific candidates
-python explore_worlds.py --seeds 6 7 34 --cols 3
+python explore_worlds.py --seeds 5 14 27 --cols 3
 
 # Headless (no display window)
-python explore_worlds.py --seeds 6 7 34 --no-show --out candidates.png
+python explore_worlds.py --seeds 5 14 27 --no-show --out candidates.png
 ```
 
 Each cell shows seed number, obstacle count, and Euclidean start→goal distance. The terminal also prints a full table with Manhattan distance. Choose seeds with varied obstacle density and goal distance.
 
-Current experiment worlds: **6, 7, 34**.
+Current experiment worlds: **5, 14, 27**.
 
 ### Running Sweeps
 
@@ -286,7 +286,7 @@ Current experiment worlds: **6, 7, 34**.
 bash run_sweeps.sh
 ```
 
-This registers 6 sweeps (3 worlds × 2 algos) then runs them **sequentially** (PPO+DQN in parallel per world, one world at a time) to stay within GPU memory limits. Logs per world: `logs/ppo_world_6.log`, `logs/dqn_world_6.log`, etc.
+This registers 6 sweeps (3 worlds × 2 algos) then runs them **sequentially** — all DQN sweeps first (across all 3 worlds), then all PPO sweeps — to stay within GPU memory limits. Logs per world: `logs/ppo_world_5.log`, `logs/dqn_world_5.log`, etc.
 
 To register and launch individually:
 
@@ -296,13 +296,13 @@ wandb sweep sweep_dqn.yaml    # DQN (world_seed=42 template default)
 wandb agent <sweep-id>
 ```
 
-Both sweeps optimize `metrics/success_rate` via Bayesian search with a run cap of 40 (PPO) / 30 (DQN).
+Both sweeps optimize `metrics/success_rate` via Bayesian search with a run cap of **10**.
 
 ---
 
 ## Hyperparameter Sweeps
 
-Both PPO and DQN use a **20M environment step budget** for fair comparison. PPO's update count is derived as `total_env_steps // (num_envs × rollouts)` so the budget is identical regardless of which rollout length is sampled.
+Both PPO and DQN use a **2M environment step budget** for fair comparison. PPO's update count is derived as `total_env_steps // (num_envs × rollouts)` so the budget is identical regardless of which rollout length is sampled. The sweep fixes `num_envs=128`.
 
 **PPO swept parameters:**
 
@@ -328,7 +328,7 @@ Both PPO and DQN use a **20M environment step budget** for fair comparison. PPO'
 | `buffer_size` | `50k`, `100k`, `200k` | Categorical |
 | `batch_size` | `128`, `256`, `512` | Categorical |
 | `target_update_freq` | `200`, `500`, `1000`, `2000` | Categorical |
-| `eps_decay_steps` | `100k`, `250k`, `500k`, `1000k` | Categorical |
+| `eps_decay_steps` | `500k`, `1000k`, `2000k`, `5000k` | Categorical |
 | `world_seed` | fixed per sweep | Not swept — each world has its own sweep |
 
 ### Logged Metrics
@@ -352,17 +352,17 @@ All parameters are in `EnvParams` (`environment/warehouse.py`):
 
 | Parameter | Default | Description |
 |---|---|---|
-| `M` | `16` | Grid size (M×M) |
+| `M` | `8` | Grid size (M×M) |
 | `W_cell` | `0.8` | Cell width (= 4 × r_robot) |
 | `r_robot` | `0.2` | Robot radius |
 | `r_goal` | `0.3` | Goal acceptance radius |
 | `fixed_speed` | `1.0` | Robot speed (constant) |
-| `camera_range` | `2.0` | Forward camera range (world units) |
-| `lidar_range` | `8.0` | Lidar max range (world units) |
+| `camera_range` | `3.0` | Forward camera range (world units) |
+| `lidar_range` | `4.0` | Lidar max range (world units) |
 | `num_lidar_rays` | `16` | Number of lidar rays (360° sweep) |
 | `delta_theta_small` | `5°` | Small turn magnitude |
 | `delta_theta_big` | `30°` | Large turn magnitude |
 | `dt` | `0.1` | Simulation timestep |
 | `max_steps_in_episode` | `200` | Episode timeout |
-| `num_obstacles` | `12` | Rectangular obstacles in the map |
+| `num_obstacles` | `4` | Rectangular obstacles in the map |
 | `c_step` | `−0.1` | Step penalty |
